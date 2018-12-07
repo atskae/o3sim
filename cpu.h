@@ -18,7 +18,6 @@
 
 #define MAX_COMMIT_NUM 2 // max number of instructions that can commit
 
-#define NUM_FU 3
 #define INT_FU_LAT 1
 #define MULT_FU_LAT 2
 #define MEM_FU_LAT 3
@@ -59,14 +58,20 @@ typedef struct stage_t {
 	//status 	
 	int busy;
 	int stalled;
+
+	// just for printing
+	int print_idx;
+	int rob_idx;
+	int iq_idx;
+	int lsq_idx;
 	
 } stage_t;
 
 // functional unit
 typedef struct fu_t {	
-	
-	int pc; // for printing only
 
+	int print_idx; // just for printing
+	
 	int rob_idx;
 
 	char opcode[128];
@@ -77,8 +82,7 @@ typedef struct fu_t {
 	int u_rs1_val;
 	int u_rs2_val;
 
-	int stalled;
-	int busy;	
+	int busy;
 
 } fu_t;
 
@@ -111,6 +115,8 @@ typedef struct rob_entry_t {
 	int u_rd_val; // register value	
 	char zero_flag;
 
+	char commit_ready; // completed writeback
+
 	int lsq_idx; // load-store queue index ; only needed for memory operations
 } rob_entry_t;
 
@@ -123,6 +129,8 @@ typedef struct rob_t {
 // instruction queue
 typedef struct iq_entry_t {
 	char taken;
+
+	int pc; // just for printing
 
 	int cycle_issued; // earliest insn is issued first
 	char opcode[128];
@@ -143,6 +151,8 @@ typedef struct iq_entry_t {
 // load-store queue
 typedef struct lsq_entry_y {
 	char taken;
+
+	int pc; // just for printing
 
 	char opcode[128]; // load or store
 	char mem_addr_valid;
@@ -187,8 +197,12 @@ typedef struct cpu_t {
 	fu_t intFU;
 	fu_t multFU;
 	fu_t memFU; 
-	
-	stage_t print_stack[NUM_STAGES];
+
+	// holds all instruction information ; to index into this, use get_code_index(pc)
+	stage_t* print_info;
+
+	// info about current cycle only	
+	int print_stack[16]; // holds indicies into print_info[]
 	int print_stack_ptr;
 
 } cpu_t;

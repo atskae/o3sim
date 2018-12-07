@@ -4,7 +4,7 @@
 #include "cpu.h"
 
 void print_insn(stage_t* stage);
-void print_stage_content(char* name, stage_t* stage);
+void print_stage_content(stage_t* stage);
 void print_rename_table(cpu_t* cpu);
 
 void print_iq(iq_entry_t* iq);
@@ -16,6 +16,6 @@ void print_arch_regs(areg_t* regs);
 void print_all_FU(cpu_t* cpu);
 
 void print_cpu(cpu_t* cpu);
-void update_print_stack(char* name, cpu_t* cpu, stage_t* stage);
+void update_print_stack(char* name, cpu_t* cpu, int idx); // index into cpu->print_info
 
 #endif // PRINT_H
