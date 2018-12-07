@@ -4,6 +4,7 @@
 
 #include "cpu.h"
 #include "print.h" // all printing functions
+#include <limits.h> // INT_MAX
 
 #define PRINT 1
 
@@ -18,6 +19,9 @@ cpu_t* cpu_init(const char* filename) {
 	cpu->pc = CODE_START_ADDR;
 	memset(cpu->arch_regs, 0, sizeof(areg_t) * NUM_ARCH_REGS);
 	memset(cpu->unified_regs, 0, sizeof(ureg_t) * NUM_UNIFIED_REGS);
+	for(int i=0; i<NUM_UNIFIED_REGS; i++) {
+		cpu->unified_regs[i].valid = 1;
+	}		
 	
 	memset(cpu->front_rename_table, -1, NUM_ARCH_REGS * sizeof(int));	
 	memset(cpu->back_rename_table, -1, NUM_ARCH_REGS * sizeof(int));	
@@ -64,8 +68,8 @@ cpu_t* cpu_init(const char* filename) {
 	cpu->intFU.busy = 0;
 	cpu->intFU.print_idx = cpu->code_size;
 	
-	cpu->multFU.busy = 0;
-	cpu->multFU.print_idx = cpu->code_size;
+	cpu->mulFU.busy = 0;
+	cpu->mulFU.print_idx = cpu->code_size;
 	
 	cpu->memFU.busy = 0;
 	cpu->memFU.print_idx = cpu->code_size;
@@ -94,7 +98,10 @@ char is_intFU(char* opcode) {
 		strcmp(opcode, "XOR")   == 0 ||
 		strcmp(opcode, "MOVC") 	== 0 ||
 		strcmp(opcode, "ADDL") 	== 0 ||
-		strcmp(opcode, "SUBL") 	== 0 ){
+		strcmp(opcode, "SUBL") 	== 0 ||
+		strcmp(opcode, "LOAD") 	== 0 || // addr calculation
+		strcmp(opcode, "STORE") == 0 ){ // addr calculation
+
 		return 1;
 	}
 	else return 0;
@@ -208,6 +215,10 @@ int decode(cpu_t* cpu) {
 		/*
 			Rename instruction
 		*/
+		// rename the source registers ; if no source, renamed register is simply -1
+		stage->u_rs1 = cpu->front_rename_table[stage->rs1];
+		stage->u_rs2 = cpu->front_rename_table[stage->rs2];	
+	
 		// allocate a unified register if this instruction writes to a register	
 		if(has_rd(stage->opcode)) {
 			
@@ -232,12 +243,10 @@ int decode(cpu_t* cpu) {
 			
 			// update frontend rename table
 			cpu->front_rename_table[stage->rd] = stage->u_rd;
-		
+			
+			cpu->unified_regs[stage->u_rd].valid = 0;	
 		}
-		// rename the source registers ; if no source, renamed register is simply -1
-		stage->u_rs1 = cpu->front_rename_table[stage->rs1];
-		stage->u_rs2 = cpu->front_rename_table[stage->rs2];
-	
+			
 		/*
 			Create LSQ (if mem), IQ, and ROB entries
 		*/		
@@ -281,6 +290,7 @@ int decode(cpu_t* cpu) {
 			robe->commit_ready= 0;
 			strcpy(robe->opcode, stage->opcode);
 			robe->pc = stage->pc;
+			robe->rd = stage->rd;
 			robe->u_rd = stage->u_rd;
 			robe->lsq_idx = lsq_idx;		
 
@@ -297,7 +307,7 @@ int decode(cpu_t* cpu) {
 			if(!iqe->taken) {
 				iq_idx = i;
 				iqe->taken = 1;
-				iqe->cycle_issued = cpu->clock;
+				iqe->cycle_dispatched = cpu->clock;
 
 				iqe->pc = stage->pc; // just for printing
 				iqe->rob_idx = rob_idx;		
@@ -329,6 +339,16 @@ int decode(cpu_t* cpu) {
 					iqe->u_rs2_ready = 1;
 				}	
 
+				// check if any source registers are ready
+				if(cpu->unified_regs[iqe->u_rs1].valid) {
+					iqe->u_rs1_ready = 1;
+					iqe->u_rs1_val = cpu->unified_regs[iqe->u_rs1].val;
+				}
+				if(cpu->unified_regs[iqe->u_rs2].valid) {
+					iqe->u_rs2_ready = 1;
+					iqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;
+				}
+
 				iqe->lsq_idx = lsq_idx;
 			
 				break;
@@ -359,47 +379,103 @@ int issue(cpu_t* cpu) {
 			
 	// look for the earliest dispatched insn with all operands ready and send to FU	
 	iq_entry_t* iq = cpu->iq;
+	int earliest_intFU = INT_MAX;
+	int earliest_mulFU = INT_MAX;
+
 	for(int i=0; i<IQ_SIZE; i++) {
 		iq_entry_t* iqe = &iq[i];
-		if(cpu->intFU.busy < 0) { // if this FU is free
-			if(iqe->taken && is_intFU(iqe->opcode) && iqe->u_rs1_ready && iqe->u_rs2_ready ) {	
-				iqe->taken = 0; // free this IQ entry
-				
-				// send this insn to intFU
-				fu_t* intFU = &cpu->intFU;
-				rob_entry_t* robe = &cpu->rob.entries[iqe->rob_idx];
-				intFU->rob_idx = iqe->rob_idx;
-				strcpy(intFU->opcode, iqe->opcode);
-				intFU->u_rd = robe->u_rd; // target register
-			
-				intFU->imm = iqe->imm;
-				intFU->u_rs1_val = iqe->u_rs1_val;
-				intFU->u_rs2_val = iqe->u_rs2_val;
-					
-				intFU->busy = INT_FU_LAT; // latency + issue latency
+		if(!iqe->taken)	continue;
+	
+		// check if any source registers are ready
+		if(cpu->unified_regs[iqe->u_rs1].valid) {
+			iqe->u_rs1_ready = 1;
+			iqe->u_rs1_val = cpu->unified_regs[iqe->u_rs1].val;
+		}
+		if(cpu->unified_regs[iqe->u_rs2].valid) {
+			iqe->u_rs2_ready = 1;
+			iqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;
+		}
 
-				// printing stuff
-				intFU->print_idx = get_code_index(iqe->pc);
-				update_print_stack("Issue", cpu, get_code_index(iqe->pc));
-				break;	
+		// search for the earliest ready instruction for each FU
+	
+		if(cpu->intFU.busy < 0 && is_intFU(iqe->opcode)) { // if this FU is free and this insn goes to intFU
+			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {	
+				if(iqe->cycle_dispatched < earliest_intFU) earliest_intFU = i;
 			}
 		}
-		//else if( !sent_multFU && (strcmp(iqe->opcode, "MULT") == 0) && iqe->u_rs1_ready && iqe->u_rs2_ready ) {	
-		//	sent_multFU = 1; 
-		//	iqe->taken = 0; // free this IQ entry
-		//	cpu->multFU.insn = cpu->stage[IS]; // send to EX stage to multFU
-		//  cpu->busy = MULT_FU_LAT; // latency
-		//}
-		//else if( !sent_memFU && is_mem(iqe->opcode) && iqe->u_rs1_ready && iqe->u_rs2_ready ) {
-		//	sent_memFU = 1; 
-		//	iqe->taken = 0; // free this IQ entry
-		//	cpu->memFU.insn = cpu->stage[IS]; // send to EX stage to memFU
-		//  cpu->busy = MEM_FU_LAT; // latency
-		//}
+		if(cpu->mulFU.busy < 0 && (strcmp(iqe->opcode, "MUL") == 0)) {	
+			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {
+				if(iqe->cycle_dispatched < earliest_mulFU) earliest_mulFU = i;
+			}
+		}
 	}	
+	
+	// issue for intFU
+	// send ready insn to intFU
+	if(earliest_intFU != INT_MAX) { // means intFU is free and found a ready insn
+		iq_entry_t* iqe = &cpu->iq[earliest_intFU];
+		iqe->taken = 0; // free this IQ entry
+		
+		// send this insn to intFU
+		fu_t* intFU = &cpu->intFU;
+		rob_entry_t* robe = &cpu->rob.entries[iqe->rob_idx];
+		intFU->rob_idx = iqe->rob_idx;
+		strcpy(intFU->opcode, iqe->opcode);
+		intFU->u_rd = robe->u_rd; // target register
+
+		intFU->imm = iqe->imm;
+		intFU->u_rs1_val = iqe->u_rs1_val;
+		intFU->u_rs2_val = iqe->u_rs2_val;
 			
+		intFU->busy = INT_FU_LAT; // latency + issue latency
+
+		// printing stuff
+		intFU->print_idx = get_code_index(iqe->pc);
+		update_print_stack("Issue", cpu, intFU->print_idx);
+	}
+
+	// send ready insn to mulFU
+	if(earliest_mulFU != INT_MAX) { // means mulFU is free and found a ready insn
+		iq_entry_t* iqe = &cpu->iq[earliest_mulFU];
+		iqe->taken = 0; // free this IQ entry
+		
+		// send this insn to mulFU
+		fu_t* mulFU = &cpu->mulFU;
+		rob_entry_t* robe = &cpu->rob.entries[iqe->rob_idx];
+		mulFU->rob_idx = iqe->rob_idx;
+		strcpy(mulFU->opcode, iqe->opcode);
+		mulFU->u_rd = robe->u_rd; // target register
+
+		mulFU->imm = iqe->imm;
+		mulFU->u_rs1_val = iqe->u_rs1_val;
+		mulFU->u_rs2_val = iqe->u_rs2_val;
+			
+		mulFU->busy = MUL_FU_LAT; // latency + issue latency
+
+		// printing stuff
+		mulFU->print_idx = get_code_index(iqe->pc);
+		update_print_stack("Issue", cpu, mulFU->print_idx);
+	}
+	
 	return 0;
 	
+}
+
+// broadcast calculated value to waiting insn in IQ
+void broadcast(iq_entry_t* iq, int u_rd, int u_rd_val) {
+	for(int i=0; i<IQ_SIZE; i++) {
+		iq_entry_t* iqe = &iq[i];
+		if(iqe->taken) {
+			if(u_rd == iqe->u_rs1) {
+				iqe->u_rs1_ready = 1;
+				iqe->u_rs1_val = u_rd_val;	
+			}
+			if(u_rd == iqe->u_rs2) {
+				iqe->u_rs2_ready = 1;
+				iqe->u_rs2_val = u_rd_val;	
+			}
+		} // if iqe->taken ; end
+	}
 }
 
 int execute(cpu_t* cpu) {
@@ -409,7 +485,7 @@ int execute(cpu_t* cpu) {
 	// intFU	
 	fu_t* intFU = &cpu->intFU;
 	intFU->busy--;
-	if(intFU->busy >= 0) {
+	if(intFU->busy == 0) {
 
 		rob_entry_t* robe = &cpu->rob.entries[intFU->rob_idx];	
 
@@ -423,32 +499,24 @@ int execute(cpu_t* cpu) {
 		else if(strcmp(intFU->opcode, "SUBL") == 0) robe->u_rd_val = intFU->u_rs1_val - intFU->imm;	
 		robe->valid = 1;
 		
-		// broadcast calculated value to waiting insn in IQ
-		iq_entry_t* iq = cpu->iq;
-		for(int i=0; i<IQ_SIZE; i++) {
-			iq_entry_t* iqe = &iq[i];
-			if(iqe->taken) {
-				if(intFU->u_rd == iq->u_rs1) {
-					iqe->u_rs1_ready = 1;
-					iqe->u_rs1_val = robe->u_rd_val;	
-				}
-				if(intFU->u_rd == iq->u_rs2) {
-					iqe->u_rs2_ready = 1;
-					iqe->u_rs2_val = robe->u_rd_val;	
-				}
-			}
-		} // broadcast ; end
-		update_print_stack("Execute", cpu, intFU->print_idx);
-		
+		// broadcast ready value to IQ
+		broadcast(cpu->iq, robe->u_rd, robe->u_rd_val);
+			
+		update_print_stack("Execute", cpu, intFU->print_idx);		
 	} 
-	// multFU
-	//fu_t* multFU = &cpu->multFU;
-	//if(multFU.busy > 0) {
-	//	multFU.busy--;
-	//	if( !multFU->busy && !intFU->stalled) {
-	//
-	//	}	
-	//}	
+	// mulFU
+	fu_t* mulFU = &cpu->mulFU;
+	mulFU->busy--;
+	if(mulFU->busy == 0) {
+		rob_entry_t* robe = &cpu->rob.entries[mulFU->rob_idx];	
+		robe->u_rd_val = mulFU->u_rs1_val * mulFU->u_rs2_val;
+		robe->valid = 1;
+		
+		// broadcast ready value to IQ
+		broadcast(cpu->iq, robe->u_rd, robe->u_rd_val);
+
+		update_print_stack("Execute", cpu, mulFU->print_idx);		
+	}	
 
 	return 0;
 }
@@ -473,7 +541,25 @@ int writeback(cpu_t* cpu) {
 	if(robe->valid) { // insn has completed
 		// write result to URF
 		cpu->unified_regs[robe->u_rd].val = robe->u_rd_val;
+		cpu->unified_regs[robe->u_rd].valid = 1;
 		robe->commit_ready = 1;
+		
+		// broadcast calculated value to waiting insn in IQ
+		//iq_entry_t* iq = cpu->iq;
+		//for(int i=0; i<IQ_SIZE; i++) {
+		//	iq_entry_t* iqe = &iq[i];
+		//	if(iqe->taken) {
+		//		if(robe->u_rd == iqe->u_rs1) {
+		//			iqe->u_rs1_ready = 1;
+		//			iqe->u_rs1_val = robe->u_rd_val;	
+		//		}
+		//		if(robe->u_rd == iqe->u_rs2) {
+		//			iqe->u_rs2_ready = 1;
+		//			iqe->u_rs2_val = robe->u_rd_val;	
+		//		}
+		//	}
+		//} // broadcast ; end
+
 		update_print_stack("Writeback", cpu, get_code_index(robe->pc));
 	} 
 
@@ -490,6 +576,12 @@ int commit(cpu_t* cpu) {
 		if(robe->commit_ready) { // insn has wrote to URF 
 			// set arch reg mapping to URF
 			cpu->arch_regs[robe->rd].u_rd = robe->u_rd;
+			
+			// update backend rename table
+			int old_u_rd = cpu->back_rename_table[robe->rd];
+			if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
+			cpu->back_rename_table[robe->rd] = robe->u_rd;
+
 			robe->taken = 0;
 			//robe->valid = 0;
 			//robe->pc = 0;
@@ -559,7 +651,7 @@ int cpu_run(cpu_t* cpu) {
 		cpu->done = no_more_insn(cpu);
 		if(cpu->clock == cpu->stop_cycle || cpu->done) {
 			printf("sim> Reached %i cycles\n", cpu->clock);
-			if(cpu->done) printf("sim> No more instructions to simulate.\n");
+			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);
 			break;
 		}
 

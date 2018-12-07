@@ -11,7 +11,7 @@ void print_insn(stage_t* stage) {
 	char rename = !(strcmp(stage->name, "Fetch") == 0);
 
 	// no operand insn
-	if(strcmp(stage->opcode, "NOP") == 0 || strcmp(stage->opcode, "HALT")) printf("%s ", stage->opcode);
+	if(strcmp(stage->opcode, "NOP") == 0 || strcmp(stage->opcode, "HALT") == 0) printf("%s ", stage->opcode);
 
 	// insn with only literal
 	if(strcmp(stage->opcode, "MOVC") == 0) {
@@ -20,21 +20,21 @@ void print_insn(stage_t* stage) {
 	}
 	if(strcmp(stage->opcode, "BZ") == 0 || strcmp(stage->opcode, "BNZ") == 0) {
 		printf("%s,R%d,#%d ", stage->opcode, stage->rs1, stage->imm);
-		if(rename) printf("%s,U%d,#%d ", stage->opcode, stage->u_rs1, stage->imm);
+		if(rename) printf("(%s,U%d,#%d) ", stage->opcode, stage->u_rs1, stage->imm);
 	}
 
 	// insn with register and literal	
 	if(strcmp(stage->opcode, "LOAD") == 0 || strcmp(stage->opcode, "ADDL") == 0 ||strcmp(stage->opcode, "SUBL") == 0) {
 		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rd, stage->rs1, stage->imm);
-		if(rename) printf("%s,U%d,U%d,#%d ", stage->opcode, stage->u_rd, stage->u_rs1, stage->imm);
+		if(rename) printf("(%s,U%d,U%d,#%d) ", stage->opcode, stage->u_rd, stage->u_rs1, stage->imm);
 	}
 	if(strcmp(stage->opcode, "STORE") == 0 || strcmp(stage->opcode, "JAL") == 0) {
 		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rs2, stage->rs1, stage->imm);
-		if(rename) printf("%s,U%d,U%d,#%d ", stage->opcode, stage->u_rs2, stage->u_rs1, stage->imm);
+		if(rename) printf("(%s,U%d,U%d,#%d) ", stage->opcode, stage->u_rs2, stage->u_rs1, stage->imm);
 	}	
 	if(strcmp(stage->opcode, "JUMP") == 0) {
 		printf("%s,R%d,#%d ", stage->opcode, stage->rs1, stage->imm);
-		if(rename) printf("%s,U%d,#%d ", stage->opcode, stage->u_rs1, stage->imm);
+		if(rename) printf("(%s,U%d,#%d) ", stage->opcode, stage->u_rs1, stage->imm);
 	}	
 
 	// insn with only registers
@@ -46,7 +46,7 @@ void print_insn(stage_t* stage) {
 		strcmp(stage->opcode, "MUL") == 0 ){
 		
 		printf("%s,R%d,R%d,R%d ", stage->opcode, stage->rd, stage->rs1, stage->rs2);
-		if(rename) printf("%s,U%d,U%d,U%d ", stage->opcode, stage->u_rd, stage->u_rs1, stage->u_rs2);
+		if(rename) printf("(%s,U%d,U%d,U%d) ", stage->opcode, stage->u_rd, stage->u_rs1, stage->u_rs2);
 	}
 
 }
@@ -54,15 +54,15 @@ void print_insn(stage_t* stage) {
 void print_stage_content(stage_t* stage) {
 	printf("%-15s: pc(%d) ", stage->name, stage->pc);
 	print_insn(stage);	
-	if(strcmp(stage->name, "intFU") == 0 || strcmp(stage->name, "multFU") == 0 || strcmp(stage->name, "memFU") == 0 ) {
+	if(strcmp(stage->name, "intFU") == 0 || strcmp(stage->name, "mulFU") == 0 || strcmp(stage->name, "memFU") == 0 ) {
 		if(stage->busy > 0) {
 			int lat;
 			if(strcmp(stage->name, "intFU") == 0) lat = INT_FU_LAT;
-			else if(strcmp(stage->name, "multFU") == 0) lat = MULT_FU_LAT;
+			else if(strcmp(stage->name, "mulFU") == 0) lat = MUL_FU_LAT;
 			else lat = MEM_FU_LAT;
 			
-			if(stage->busy == lat) printf(" | *issued ");
-			else printf(" | busy %i ", stage->busy);
+			if(stage->busy == lat) printf("*issued ");
+			else printf("busy %i ", stage->busy);
 		}
 	}	
 	printf("\n");
@@ -79,10 +79,10 @@ void print_rename_table(cpu_t* cpu) {
 void print_iq(iq_entry_t* iq) {
 	printf("---Instruction Queue---\n");
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "dispatch", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm");
 	for(int i=0; i<IQ_SIZE; i++) {
 		iq_entry_t* iqe = &iq[i];
-		printf("%-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm);	
+		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm);	
 	}
 }
 
@@ -129,41 +129,39 @@ void print_arch_regs(areg_t* regs) {
 void print_all_FU(cpu_t* cpu) {
 
 	fu_t* intFU = &cpu->intFU;
-	fu_t* multFU = &cpu->multFU;
+	fu_t* mulFU = &cpu->mulFU;
 	fu_t* memFU = &cpu->memFU;
 
 	printf("---Functional Units---\n");
 	stage_t* stage = &cpu->print_info[intFU->print_idx];
-	strcpy(stage->name, "intFU");
 	stage->busy = intFU->busy;
-	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP
+	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
+	strcpy(stage->name, "intFU");
 	print_stage_content(stage);
 
-	stage = &cpu->print_info[multFU->print_idx];
-	strcpy(stage->name, "multFU");
-	stage->busy = multFU->busy;
-	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP
+	stage = &cpu->print_info[mulFU->print_idx];
+	stage->busy = mulFU->busy;
+	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
+	strcpy(stage->name, "mulFU");
 	print_stage_content(stage);
 	
 	printf("---Memory Function Unit---\n");
 	stage = &cpu->print_info[memFU->print_idx];
-	strcpy(stage->name, "memFU");
 	stage->busy = memFU->busy;
-	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP
+	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
+	strcpy(stage->name, "memFU");
 	print_stage_content(stage);
 
 }
 
 void print_cpu(cpu_t* cpu) {
-	print_arch_regs(cpu->arch_regs);
-	print_unified_regs(cpu->unified_regs);
-	
+	print_unified_regs(cpu->unified_regs);	
 	print_rename_table(cpu);
-
 	print_rob(&cpu->rob);
 	//print_lsq(&cpu->lsq);
 	print_iq(cpu->iq);
-	print_all_FU(cpu);
+	print_all_FU(cpu);	
+	print_arch_regs(cpu->arch_regs);
 }
 
 void update_print_stack(char* name, cpu_t* cpu, int idx) {		

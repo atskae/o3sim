@@ -41,7 +41,7 @@ int main(int argc, char* argv[]) {
 				continue;
 			} 
 			else if(cpu->done) {
-				fprintf(stderr, "sim> No more instructions to simulate.\n");
+				fprintf(stderr, "sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);
 				continue;	
 			}
 
@@ -68,7 +68,7 @@ int main(int argc, char* argv[]) {
 				print_stage_content(stage);
 			}
 		
-			//print_cpu(cpu); // prints reg files, rob, lsq, etc...
+			print_cpu(cpu); // prints reg files, rob, lsq, etc.
 
 		} else if(strcmp(token, "quit") == 0 || strcmp(token, "q") == 0 ) {
  			printf("sim> Aufwiedersehen!\n");
@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
 				continue;
 			} 
 			else if(cpu->done) {
-				fprintf(stderr, "sim> No more instructions to simulate.\n");
+				fprintf(stderr, "sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);
 				continue;	
 			}
 			cpu->stop_cycle = cpu->clock + 1;

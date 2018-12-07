@@ -19,7 +19,7 @@
 #define MAX_COMMIT_NUM 2 // max number of instructions that can commit
 
 #define INT_FU_LAT 1
-#define MULT_FU_LAT 2
+#define MUL_FU_LAT 2
 #define MEM_FU_LAT 3
 
 /*
@@ -98,7 +98,7 @@ typedef struct ureg_t {
 	char valid; // if register contains valid data
 	char zero_flag; // for arithmetic operations
 	
-	char val; // data value
+	int val; // data value
 } ureg_t;
 
 // reorder buffer
@@ -132,7 +132,7 @@ typedef struct iq_entry_t {
 
 	int pc; // just for printing
 
-	int cycle_issued; // earliest insn is issued first
+	int cycle_dispatched; // earliest insn is issued first
 	char opcode[128];
 	int imm; // literal operand
 
@@ -196,7 +196,7 @@ typedef struct cpu_t {
 
 	/* functional units */
 	fu_t intFU;
-	fu_t multFU;
+	fu_t mulFU;
 	fu_t memFU; 
 
 	// holds all instruction information ; to index into this, use get_code_index(pc)
