@@ -82,6 +82,9 @@ typedef struct fu_t {
 	int u_rs1_val;
 	int u_rs2_val;
 
+	// only used by memFU
+	int mem_addr;
+
 	int busy;
 
 } fu_t;
@@ -150,9 +153,10 @@ typedef struct iq_entry_t {
 
 // load-store queue
 typedef struct lsq_entry_y {
-	char taken;
-
-	int pc; // just for printing
+	char taken;	
+	char done; // memory operation done, did not commit
+	int rob_idx;
+	int pc; 
 
 	char opcode[128]; // load or store
 	char mem_addr_valid;

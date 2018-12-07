@@ -8,6 +8,7 @@ void print_stage_content(stage_t* stage);
 void print_rename_table(cpu_t* cpu);
 
 void print_iq(iq_entry_t* iq);
+void print_memory(cpu_t* cpu);
 void print_lsq(lsq_t* lsq);
 void print_rob(rob_t* rob);
 

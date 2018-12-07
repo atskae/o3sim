@@ -86,6 +86,18 @@ void print_iq(iq_entry_t* iq) {
 	}
 }
 
+void print_memory(cpu_t* cpu) {
+	printf("---Data memory---\n");
+	int bytes_per_line = 64;	
+	for(int i=0; i<4000; i+=bytes_per_line) {
+		printf("%-4i: ", i);
+		for(int j=0; j<bytes_per_line; j++) { // print 4 bytes per line
+			printf("%i ", cpu->memory[i + j]);
+		}
+		printf("\n");	
+	}
+}
+
 void print_lsq(lsq_t* lsq) {
 	printf("---Load Store Queue---\n");
 	printf("%-9s %-9s\n", "head_ptr", "tail_ptr");
@@ -157,9 +169,12 @@ void print_all_FU(cpu_t* cpu) {
 void print_cpu(cpu_t* cpu) {
 	print_unified_regs(cpu->unified_regs);	
 	print_rename_table(cpu);
+	
 	print_rob(&cpu->rob);
-	//print_lsq(&cpu->lsq);
+	print_lsq(&cpu->lsq);
+	print_memory(cpu);
 	print_iq(cpu->iq);
+	
 	print_all_FU(cpu);	
 	print_arch_regs(cpu->arch_regs);
 }
