@@ -40,6 +40,10 @@ int main(int argc, char* argv[]) {
 				fprintf(stderr, "sim> Did not initialize cpu.\n");
 				continue;
 			} 
+			else if(cpu->done) {
+				fprintf(stderr, "sim> No more instructions to simulate.\n");
+				continue;	
+			}
 
 			token = strtok(NULL, " "); // obtain number of cycles to simulate
 			if(!token) {
@@ -70,11 +74,18 @@ int main(int argc, char* argv[]) {
  			printf("sim> Aufwiedersehen!\n");
 			break;
 		} else if(!token[0] || strcmp(token, "step") == 0) { // enter key was pressed
-			if(cpu) { // simulates one cycle
-				cpu->stop_cycle = cpu->clock + 1;
-				printf("Simulating 1 cycle.\n");		
-				cpu_run(cpu);	
-			} else print_usage();
+			if(!cpu) {
+				fprintf(stderr, "sim> Did not initialize cpu.\n");
+				continue;
+			} 
+			else if(cpu->done) {
+				fprintf(stderr, "sim> No more instructions to simulate.\n");
+				continue;	
+			}
+			cpu->stop_cycle = cpu->clock + 1;
+			printf("Simulating 1 cycle.\n");		
+			cpu_run(cpu);
+
 		} else {
 			printf("sim> Invalid token: %s\n", token);
 			print_usage();

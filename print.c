@@ -10,15 +10,43 @@ void print_insn(stage_t* stage) {
 
 	char rename = !(strcmp(stage->name, "Fetch") == 0);
 
-	if(strcmp(stage->opcode, "NOP") == 0) printf("NOP ");
-		
+	// no operand insn
+	if(strcmp(stage->opcode, "NOP") == 0 || strcmp(stage->opcode, "HALT")) printf("%s ", stage->opcode);
+
+	// insn with only literal
 	if(strcmp(stage->opcode, "MOVC") == 0) {
 		printf("%s,R%d,#%d ", stage->opcode, stage->rd, stage->imm);
 		if(rename) printf("(%s,U%d,#%d) ", stage->opcode, stage->u_rd, stage->imm);
 	}
+	if(strcmp(stage->opcode, "BZ") == 0 || strcmp(stage->opcode, "BNZ") == 0) {
+		printf("%s,R%d,#%d ", stage->opcode, stage->rs1, stage->imm);
+		if(rename) printf("%s,U%d,#%d ", stage->opcode, stage->u_rs1, stage->imm);
+	}
 
-	if(strcmp(stage->opcode, "STORE") == 0) {
-		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rs1, stage->rs2, stage->imm);
+	// insn with register and literal	
+	if(strcmp(stage->opcode, "LOAD") == 0 || strcmp(stage->opcode, "ADDL") == 0 ||strcmp(stage->opcode, "SUBL") == 0) {
+		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rd, stage->rs1, stage->imm);
+		if(rename) printf("%s,U%d,U%d,#%d ", stage->opcode, stage->u_rd, stage->u_rs1, stage->imm);
+	}
+	if(strcmp(stage->opcode, "STORE") == 0 || strcmp(stage->opcode, "JAL") == 0) {
+		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rs2, stage->rs1, stage->imm);
+		if(rename) printf("%s,U%d,U%d,#%d ", stage->opcode, stage->u_rs2, stage->u_rs1, stage->imm);
+	}	
+	if(strcmp(stage->opcode, "JUMP") == 0) {
+		printf("%s,R%d,#%d ", stage->opcode, stage->rs1, stage->imm);
+		if(rename) printf("%s,U%d,#%d ", stage->opcode, stage->u_rs1, stage->imm);
+	}	
+
+	// insn with only registers
+	if(	strcmp(stage->opcode, "ADD") == 0 ||
+		strcmp(stage->opcode, "SUB") == 0 ||
+		strcmp(stage->opcode, "AND") == 0 ||
+		strcmp(stage->opcode, "OR" ) == 0 ||
+		strcmp(stage->opcode, "XOR") == 0 ||
+		strcmp(stage->opcode, "MUL") == 0 ){
+		
+		printf("%s,R%d,R%d,R%d ", stage->opcode, stage->rd, stage->rs1, stage->rs2);
+		if(rename) printf("%s,U%d,U%d,U%d ", stage->opcode, stage->u_rd, stage->u_rs1, stage->u_rs2);
 	}
 
 }
@@ -139,38 +167,7 @@ void print_cpu(cpu_t* cpu) {
 }
 
 void update_print_stack(char* name, cpu_t* cpu, int idx) {		
-	if(idx < 0) {
-		idx = cpu->code_size; // NOP	
-	}
 	strcpy(cpu->print_info[idx].name, name); // update stage name
 	cpu->print_stack[cpu->print_stack_ptr] = idx;
 	cpu->print_stack_ptr++;
 }
-
-//void update_print_stack(char* name, cpu_t* cpu, stage_t* stage) {
-//	
-//	stage_t* new_stage = &cpu->print_stack[cpu->print_stack_ptr];
-//	strcpy(new_stage->name, name);
-//	new_stage->pc = stage->pc;
-//	strcpy(new_stage->opcode, stage->opcode);
-//
-//	new_stage->rd = stage->rd;
-//	new_stage->rs1 = stage->rs1;
-//	new_stage->rs2 = stage->rs2;
-//	new_stage->imm = stage->imm;	
-//
-//	//new_stage->u_rd = stage->u_rd;
-//	//new_stage->u_rs1 = stage->u_rs1;
-//	//new_stage->u_rs2 = stage->u_rs2;
-//
-//	//new_stage->rs1_val = stage->rs1_val;
-//	//new_stage->rs2_val = stage->rs2_val;	
-//	//new_stage->val = stage->val;
-//	//new_stage->mem_addr = stage->mem_addr;
-//
-//	// new_stage->zero_flag = stage->zero_flag;
-//	new_stage->stalled = stage->stalled;
-//	new_stage->busy = stage->busy;
-//
-//	cpu->print_stack_ptr++;
-//}

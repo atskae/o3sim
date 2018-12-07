@@ -176,6 +176,7 @@ typedef struct lsq_t {
 typedef struct cpu_t {
 	int clock;
 	int stop_cycle; // when to stop the simulation
+	char done; // if no more valid instructions are coming out of Fetch, stop
 	
 	int pc;		
 	insn_t* code;

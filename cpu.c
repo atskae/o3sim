@@ -27,9 +27,6 @@ cpu_t* cpu_init(const char* filename) {
 	memset(&cpu->lsq, 0, sizeof(lsq_t));	
 
 	memset(cpu->stage, 0, sizeof(stage_t) * NUM_STAGES);
-	for(int i=0; i<NUM_STAGES; i++) {
-		cpu->stage[i].pc = -1;
-	}	
 	memset(cpu->memory, 0, sizeof(int) * MEM_SIZE);
 			
 	// obtain instructions from .asm file	
@@ -56,11 +53,12 @@ cpu_t* cpu_init(const char* filename) {
 	}
 
 	// solely for printing purposes
-	cpu->print_info = (stage_t*) malloc(cpu->code_size * sizeof(stage_t) + NUM_STAGES);
+	cpu->print_info = (stage_t*) malloc((cpu->code_size + NUM_STAGES) * sizeof(stage_t));
+	memset(cpu->print_info, 0,(cpu->code_size + NUM_STAGES) * sizeof(stage_t));
 	for(int i=0; i<NUM_STAGES; i++) {
-		stage_t* nop = &cpu->print_info[cpu->code_size + i];
-		nop->pc = 0;
+		stage_t* nop = &cpu->print_info[cpu->code_size + i];	
 		strcpy(nop->opcode, "NOP");
+		nop->pc = 0;
 	}
 	
 	cpu->intFU.busy = 0;
@@ -94,7 +92,9 @@ char is_intFU(char* opcode) {
 		strcmp(opcode, "AND") 	== 0 ||
 		strcmp(opcode, "OR") 	== 0 ||
 		strcmp(opcode, "XOR")   == 0 ||
-		strcmp(opcode, "MOVC") 	== 0 ){
+		strcmp(opcode, "MOVC") 	== 0 ||
+		strcmp(opcode, "ADDL") 	== 0 ||
+		strcmp(opcode, "SUBL") 	== 0 ){
 		return 1;
 	}
 	else return 0;
@@ -114,7 +114,9 @@ char has_rd(char* opcode) {
 		strcmp(opcode, "XOR")   == 0 ||
 		strcmp(opcode, "MUL") 	== 0 ||
 		strcmp(opcode, "MOVC") 	== 0 ||
-		strcmp(opcode, "LOAD") 	== 0 ){	
+		strcmp(opcode, "LOAD") 	== 0 ||
+		strcmp(opcode, "ADDL") 	== 0 ||
+		strcmp(opcode, "SUBL") 	== 0 ){	
 		return 1;
 	}
 	else return 0;
@@ -133,8 +135,12 @@ char is_valid_insn(char* opcode) {
 		strcmp(opcode, "BZ")    == 0 ||
 		strcmp(opcode, "BNZ")   == 0 ||
 		strcmp(opcode, "JUMP")  == 0 ||
-		strcmp(opcode, "NOP")  == 0 ||
-		strcmp(opcode, "HALT")  == 0 ){
+		strcmp(opcode, "NOP")  	== 0 ||
+		strcmp(opcode, "HALT")  == 0 ||
+		// new insn
+		strcmp(opcode, "ADDL")  == 0 ||
+		strcmp(opcode, "SUBL")  == 0 ||
+		strcmp(opcode, "JAL")   == 0 ){
 		return 1;
 	}	
 	
@@ -271,6 +277,8 @@ int decode(cpu_t* cpu) {
 			rob_idx = rob->tail_ptr;
 			rob_entry_t* robe = &rob->entries[rob_idx];
 			robe->taken = 1;
+			robe->valid = 0;
+			robe->commit_ready= 0;
 			strcpy(robe->opcode, stage->opcode);
 			robe->pc = stage->pc;
 			robe->u_rd = stage->u_rd;
@@ -303,11 +311,23 @@ int decode(cpu_t* cpu) {
 				iqe->u_rs2 = stage->u_rs2;
 				iqe->u_rs2_ready = 0;
 
-				// check if insn do have source registers or source registers are ready
+				// check if insn do not need particular source registers ; set them to ready so they do not wait for them 
+				
+				// insn with only literal	
 				if(strcmp(iqe->opcode, "MOVC") == 0) {
 					iqe->u_rs1_ready = 1;
 					iqe->u_rs2_ready = 1;
 				}
+				if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
+					iqe->u_rs1_ready = 1;
+				}
+				// insn with register and literal	
+				if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "ADDL") == 0 || strcmp(iqe->opcode, "SUBL") == 0) {
+					iqe->u_rs2_ready = 1;
+				}
+				if(strcmp(iqe->opcode, "JUMP") == 0) {
+					iqe->u_rs2_ready = 1;
+				}	
 
 				iqe->lsq_idx = lsq_idx;
 			
@@ -321,8 +341,8 @@ int decode(cpu_t* cpu) {
 		// update print info
 		stage_t* p = &cpu->print_info[get_code_index(stage->pc)];
 		p->u_rd = stage->u_rd;
-		p->u_rs1 = stage->rs1;
-		p->u_rs2 = stage->rs2;
+		p->u_rs1 = stage->u_rs1;
+		p->u_rs2 = stage->u_rs2;
 		p->rob_idx = rob_idx;
 		p->iq_idx = iq_idx;
 		p->lsq_idx = lsq_idx;
@@ -341,26 +361,28 @@ int issue(cpu_t* cpu) {
 	iq_entry_t* iq = cpu->iq;
 	for(int i=0; i<IQ_SIZE; i++) {
 		iq_entry_t* iqe = &iq[i];
-		if( cpu->intFU.busy < 0 && iqe->taken && is_intFU(iqe->opcode) && iqe->u_rs1_ready && iqe->u_rs2_ready ) {	
-			iqe->taken = 0; // free this IQ entry
-			
-			// send this insn to intFU
-			fu_t* intFU = &cpu->intFU;
-			rob_entry_t* robe = &cpu->rob.entries[iqe->rob_idx];
-			intFU->rob_idx = iqe->rob_idx;
-			strcpy(intFU->opcode, iqe->opcode);
-			intFU->u_rd = robe->u_rd; // target register
-		
-			intFU->imm = iqe->imm;
-			intFU->u_rs1_val = iqe->u_rs1_val;
-			intFU->u_rs2_val = iqe->u_rs2_val;
+		if(cpu->intFU.busy < 0) { // if this FU is free
+			if(iqe->taken && is_intFU(iqe->opcode) && iqe->u_rs1_ready && iqe->u_rs2_ready ) {	
+				iqe->taken = 0; // free this IQ entry
 				
-			intFU->busy = INT_FU_LAT; // latency + issue latency
+				// send this insn to intFU
+				fu_t* intFU = &cpu->intFU;
+				rob_entry_t* robe = &cpu->rob.entries[iqe->rob_idx];
+				intFU->rob_idx = iqe->rob_idx;
+				strcpy(intFU->opcode, iqe->opcode);
+				intFU->u_rd = robe->u_rd; // target register
+			
+				intFU->imm = iqe->imm;
+				intFU->u_rs1_val = iqe->u_rs1_val;
+				intFU->u_rs2_val = iqe->u_rs2_val;
+					
+				intFU->busy = INT_FU_LAT; // latency + issue latency
 
-			// printing stuff
-			intFU->print_idx = get_code_index(iqe->pc);
-			update_print_stack("Issue", cpu, get_code_index(iqe->pc));
-			break;	
+				// printing stuff
+				intFU->print_idx = get_code_index(iqe->pc);
+				update_print_stack("Issue", cpu, get_code_index(iqe->pc));
+				break;	
+			}
 		}
 		//else if( !sent_multFU && (strcmp(iqe->opcode, "MULT") == 0) && iqe->u_rs1_ready && iqe->u_rs2_ready ) {	
 		//	sent_multFU = 1; 
@@ -391,11 +413,16 @@ int execute(cpu_t* cpu) {
 
 		rob_entry_t* robe = &cpu->rob.entries[intFU->rob_idx];	
 
-		if(strcmp(intFU->opcode, "MOVC") == 0) {
-			robe->u_rd_val = intFU->imm + 0;
-			robe->valid = 1;
-		}
-
+		// perform computation
+		if(strcmp(intFU->opcode, "MOVC") == 0) robe->u_rd_val = intFU->imm + 0;	
+		else if(strcmp(intFU->opcode, "ADD") == 0) robe->u_rd_val = intFU->u_rs1_val + intFU->u_rs2_val;
+		else if(strcmp(intFU->opcode, "SUB") == 0) robe->u_rd_val = intFU->u_rs1_val - intFU->u_rs2_val;
+		else if(strcmp(intFU->opcode, "AND") == 0) robe->u_rd_val = intFU->u_rs1_val & intFU->u_rs2_val;
+		else if(strcmp(intFU->opcode, "XOR") == 0) robe->u_rd_val = intFU->u_rs1_val ^ intFU->u_rs2_val;	
+		else if(strcmp(intFU->opcode, "ADDL") == 0) robe->u_rd_val = intFU->u_rs1_val + intFU->imm;
+		else if(strcmp(intFU->opcode, "SUBL") == 0) robe->u_rd_val = intFU->u_rs1_val - intFU->imm;	
+		robe->valid = 1;
+		
 		// broadcast calculated value to waiting insn in IQ
 		iq_entry_t* iq = cpu->iq;
 		for(int i=0; i<IQ_SIZE; i++) {
@@ -412,7 +439,8 @@ int execute(cpu_t* cpu) {
 			}
 		} // broadcast ; end
 		update_print_stack("Execute", cpu, intFU->print_idx);
-	}
+		
+	} 
 	// multFU
 	//fu_t* multFU = &cpu->multFU;
 	//if(multFU.busy > 0) {
@@ -476,6 +504,25 @@ int commit(cpu_t* cpu) {
 	return 0;
 }
 
+char no_more_insn(cpu_t* cpu) {
+
+	char rob_empty = 0;
+	if(cpu->rob.head_ptr == cpu->rob.tail_ptr && !cpu->rob.entries[cpu->rob.head_ptr].taken) rob_empty = 1;
+
+	char done = 1;
+	int ptr = cpu->print_stack_ptr - 1;
+	for(int i=ptr; i>=0; i--) {
+		int idx = cpu->print_stack[i];
+		stage_t* stage = &cpu->print_info[idx];
+		if(strcmp(stage->name, "Commit") == 0) continue;
+		if(is_valid_insn(stage->opcode) && strcmp(stage->opcode, "NOP")) {
+			done = 0;
+			break;
+		}
+	}
+
+	return (rob_empty && done);
+}
 
 /* Main simulation loop */
 int cpu_run(cpu_t* cpu) {
@@ -509,8 +556,10 @@ int cpu_run(cpu_t* cpu) {
 			print_cpu(cpu); // prints reg files, rob, lsq, etc...
 		}
 		
-		if(cpu->clock == cpu->stop_cycle) {
+		cpu->done = no_more_insn(cpu);
+		if(cpu->clock == cpu->stop_cycle || cpu->done) {
 			printf("sim> Reached %i cycles\n", cpu->clock);
+			if(cpu->done) printf("sim> No more instructions to simulate.\n");
 			break;
 		}
 
