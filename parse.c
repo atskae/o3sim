@@ -27,6 +27,7 @@ static void creat_insn(insn_t* ins, char* buffer) {
 	}
 	
 	strcpy(ins->opcode, tokens[0]);
+	ins->opcode[strcspn(ins->opcode, "\r\n")] = 0; // gets rid of new line, if exists (ex, HALT)	
 
 	// insn with only literal	
 	if(strcmp(ins->opcode, "MOVC") == 0) {

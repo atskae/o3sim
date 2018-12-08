@@ -91,6 +91,10 @@ int get_code_index(int pc) {
 	return (pc - CODE_START_ADDR) / 4;
 }
 
+char is_halt(char* opcode) {
+	return strcmp(opcode, "HALT") == 0;
+}
+
 char is_nop(char* opcode) {
 	return strcmp(opcode, "NOP") == 0;
 }
@@ -220,6 +224,13 @@ int decode(cpu_t* cpu) {
 			return 0;	
 		}
 
+		if(is_halt(stage->opcode)) {
+			cpu->stage[DP] = cpu->stage[DRF]; // move the halt to the next stage
+			cpu->stage[DRF].stalled = 1;
+			update_print_stack("Decode", cpu, get_code_index(stage->pc));
+			return 0;
+		}
+
 		// rename the source registers ; if no source, renamed register is simply -1
 		stage->u_rs1 = cpu->front_rename_table[stage->rs1];
 		stage->u_rs2 = cpu->front_rename_table[stage->rs2];	
@@ -327,68 +338,79 @@ int dispatch(cpu_t* cpu) {
 			robe->lsq_idx = lsq_idx;		
 	
 			if(is_mem(stage->opcode) && lsq_idx != -1) cpu->lsq.entries[lsq_idx].rob_idx = rob_idx;
+			if(is_halt(stage->opcode)) {
+				robe->valid = 1;
+				robe->commit_ready = 1;
+			}
 	
 			rob->tail_ptr = (rob->tail_ptr + 1) % ROB_SIZE;	
 		} // create ROB entry ; end
 	
-		// create IQ entry
-		iq_entry_t* iq = cpu->iq;
+		// create IQ entry	
 		int iq_idx = -1;	
-		// scan IQ and look for a free entry
-		for(int i=0; i<IQ_SIZE; i++) {
-			iq_entry_t* iqe = &iq[i];
-			if(!iqe->taken) {
-				iq_idx = i;
-				iqe->taken = 1;
-				iqe->cycle_dispatched = cpu->clock;
+		if(!is_halt(stage->opcode)) {
+			iq_entry_t* iq = cpu->iq;
+			// scan IQ and look for a free entry
+			for(int i=0; i<IQ_SIZE; i++) {
+				iq_entry_t* iqe = &iq[i];
+				if(!iqe->taken) {
+					iq_idx = i;
+					iqe->taken = 1;
+					iqe->cycle_dispatched = cpu->clock;
 	
-				iqe->pc = stage->pc; // just for printing
-				iqe->rob_idx = rob_idx;			
-				iqe->lsq_idx = lsq_idx;
+					iqe->pc = stage->pc; // just for printing
+					iqe->rob_idx = rob_idx;			
+					iqe->lsq_idx = lsq_idx;
 	
-				strcpy(iqe->opcode, stage->opcode);
-				iqe->imm = stage->imm;
+					strcpy(iqe->opcode, stage->opcode);
+					iqe->imm = stage->imm;
+					
+					iqe->u_rs1 = stage->u_rs1;
+					iqe->u_rs1_ready = 0;
+	
+					iqe->u_rs2 = stage->u_rs2;
+					iqe->u_rs2_ready = 0;
+	
+					// check if insn do not need particular source registers ; set them to ready so they do not wait for them 
+					
+					// insn with only literal	
+					if(strcmp(iqe->opcode, "MOVC") == 0) {
+						iqe->u_rs1_ready = 1;
+						iqe->u_rs2_ready = 1;
+					}
+					if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
+						iqe->u_rs1_ready = 1;
+					}
+					// insn with register and literal	
+					if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "ADDL") == 0 || strcmp(iqe->opcode, "SUBL") == 0) {
+						iqe->u_rs2_ready = 1;
+					}
+					if(strcmp(iqe->opcode, "JUMP") == 0) {
+						iqe->u_rs2_ready = 1;
+					}	
+	
+					// check if any source registers are ready
+					if(cpu->unified_regs[iqe->u_rs1].valid) {
+						iqe->u_rs1_ready = 1;
+						iqe->u_rs1_val = cpu->unified_regs[iqe->u_rs1].val;
+					}
+					if(cpu->unified_regs[iqe->u_rs2].valid) {
+						iqe->u_rs2_ready = 1;
+						if(strcmp(iqe->opcode, "STORE") == 0) {
+							lsq_entry_t* lsqe = &cpu->lsq.entries[iqe->lsq_idx];
+							lsqe->u_rs2_ready = 1;
+							lsqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;	
+						}
+						iqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;
+					}
 				
-				iqe->u_rs1 = stage->u_rs1;
-				iqe->u_rs1_ready = 0;
-	
-				iqe->u_rs2 = stage->u_rs2;
-				iqe->u_rs2_ready = 0;
-	
-				// check if insn do not need particular source registers ; set them to ready so they do not wait for them 
-				
-				// insn with only literal	
-				if(strcmp(iqe->opcode, "MOVC") == 0) {
-					iqe->u_rs1_ready = 1;
-					iqe->u_rs2_ready = 1;
+					break;
 				}
-				if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
-					iqe->u_rs1_ready = 1;
-				}
-				// insn with register and literal	
-				if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "ADDL") == 0 || strcmp(iqe->opcode, "SUBL") == 0) {
-					iqe->u_rs2_ready = 1;
-				}
-				if(strcmp(iqe->opcode, "JUMP") == 0) {
-					iqe->u_rs2_ready = 1;
-				}	
-	
-				// check if any source registers are ready
-				if(cpu->unified_regs[iqe->u_rs1].valid) {
-					iqe->u_rs1_ready = 1;
-					iqe->u_rs1_val = cpu->unified_regs[iqe->u_rs1].val;
-				}
-				if(cpu->unified_regs[iqe->u_rs2].valid) {
-					iqe->u_rs2_ready = 1;
-					iqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;
-				}
-			
-				break;
-			}
-		} // create IQ entry ; end
-		if(iq_idx < 0) {
-			printf("IQ full... insert logic here...\n");
-		}	
+			} // create IQ entry ; end
+			if(iq_idx < 0) {
+				printf("IQ full... insert logic here...\n");
+			}	
+		} // !is_halt() ; end
 	
 		// update print info
 		stage_t* p = &cpu->print_info[get_code_index(stage->pc)];
@@ -510,7 +532,7 @@ void broadcast(cpu_t* cpu, int u_rd, int u_rd_val) {
 	lsq_entry_t* lsq = cpu->lsq.entries;	
 	for(int i=0; i<LSQ_SIZE; i++) {
 		lsq_entry_t* lsqe = &lsq[i];
-		if(lsq->taken) {
+		if(lsqe->taken) {
 			if(u_rd == lsqe->u_rs2) {
 				lsqe->u_rs2_val = u_rd_val;
 				lsqe->u_rs2_ready = 1;	
@@ -546,6 +568,7 @@ int execute(cpu_t* cpu) {
 			else if(strcmp(intFU->opcode, "XOR") == 0) u_rd->val = intFU->u_rs1_val ^ intFU->u_rs2_val;	
 			else if(strcmp(intFU->opcode, "ADDL") == 0) u_rd->val = intFU->u_rs1_val + intFU->imm;
 			else if(strcmp(intFU->opcode, "SUBL") == 0) u_rd->val = intFU->u_rs1_val - intFU->imm;		
+			if(u_rd->val == 0) u_rd->zero_flag = 1;
 			u_rd->valid = 1;
 
 			// broadcast ready value to IQ and LSQ
