@@ -192,6 +192,11 @@ typedef struct saved_state_t {
 	int front_rename_table[NUM_ARCH_REGS];	
 } saved_state_t;
 
+typedef struct print_info_t {
+	char name[128];
+	int idx; // index into cpu->print_info
+} print_info_t;
+
 typedef struct cpu_t {
 	int clock;
 	int stop_cycle; // when to stop the simulation
@@ -230,7 +235,7 @@ typedef struct cpu_t {
 	stage_t* print_info;
 
 	// info about current cycle only	
-	int print_stack[16]; // holds indicies into print_info[]
+	print_info_t print_stack[16]; // holds indicies into print_info[]
 	int print_stack_ptr;
 
 } cpu_t;

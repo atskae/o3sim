@@ -4,7 +4,7 @@
 #include "cpu.h"
 
 void print_insn(stage_t* stage);
-void print_stage_content(stage_t* stage);
+void print_stage_content(char* name, stage_t* stage);
 void print_rename_table(cpu_t* cpu);
 
 void print_iq(iq_entry_t* iq);

@@ -63,12 +63,13 @@ cpu_t* cpu_init(const char* filename) {
 	}
 
 	// solely for printing purposes
-	cpu->print_info = (stage_t*) malloc((cpu->code_size + NUM_STAGES) * sizeof(stage_t));
-	memset(cpu->print_info, 0,(cpu->code_size + NUM_STAGES) * sizeof(stage_t));
-	for(int i=0; i<NUM_STAGES; i++) {
-		stage_t* nop = &cpu->print_info[cpu->code_size + i];	
+	cpu->print_info = (stage_t*) malloc((cpu->code_size + 1) * sizeof(stage_t)); // information about each instruction ; +1 for NOP
+	memset(cpu->print_info, 0,(cpu->code_size + 1) * sizeof(stage_t));
+	for(int i=0; i<cpu->code_size + 1; i++) {
+		stage_t* nop = &cpu->print_info[i];	
 		strcpy(nop->opcode, "NOP");
 		nop->pc = 0;
+		nop->cfid = -1;
 	}
 	
 	cpu->intFU.busy = 0;
@@ -219,8 +220,9 @@ int fetch(cpu_t* cpu) {
 		cpu->stage[DRF] = cpu->stage[F];
 		
 	}
+	if(stage->busy > 0) stage->busy--;
 
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Fetch", cpu, cpu->code_size + F);
+	if(!is_valid_insn(stage->opcode)) update_print_stack("Fetch", cpu, cpu->code_size); // NOP
 	else update_print_stack("Fetch", cpu, get_code_index(stage->pc));
 
 	return 0;
@@ -243,6 +245,12 @@ int decode(cpu_t* cpu) {
 			cpu->stage[DP] = cpu->stage[DRF]; // move the halt to the next stage
 			cpu->stage[DRF].stalled = 1;
 			update_print_stack("Decode", cpu, get_code_index(stage->pc));
+			return 0;
+		}
+	
+		if(is_nop(stage->opcode)) {
+			cpu->stage[DP] = cpu->stage[DRF]; // move the halt to the next stage
+			update_print_stack("Decode", cpu, cpu->code_size);
 			return 0;
 		}
 
@@ -287,8 +295,9 @@ int decode(cpu_t* cpu) {
 		cpu->stage[DP] = cpu->stage[DRF]; // move to dispatch
 
 	}
-	
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Decode", cpu, cpu->code_size + DRF);
+	if(stage->busy > 0) stage->busy--;
+
+	if(!is_valid_insn(stage->opcode)) update_print_stack("Decode", cpu, cpu->code_size); // NOP
 	else update_print_stack("Decode", cpu, get_code_index(stage->pc));
 	
 	return 0;
@@ -303,11 +312,14 @@ int dispatch(cpu_t* cpu) {
 		if(!is_valid_insn(stage->opcode)) {
 			stage->pc = -1;	
 			cpu->stage[DP].stalled = 1;
-			update_print_stack("Dispatch", cpu, cpu->code_size + DP);
+			update_print_stack("Dispatch", cpu, cpu->code_size); // NOP
 			return 0;	
 		}
-		if(is_nop(stage->opcode)) return 0;
-	
+		if(is_nop(stage->opcode)) {
+			update_print_stack("Dispatch", cpu, cpu->code_size); // NOP
+			return 0;
+		}
+
 		// create an LSQ entry if this is a memory operation	
 		int lsq_idx = -1; // IQ entry needs this value
 		if(is_mem(stage->opcode)) {
@@ -462,8 +474,9 @@ int dispatch(cpu_t* cpu) {
 		p->lsq_idx = lsq_idx;
 		p->cfid = cpu->cfid;
 	}
-	
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Dispatch", cpu, cpu->code_size + DP);
+	if(stage->busy > 0) stage->busy--;
+
+	if(!is_valid_insn(stage->opcode)) update_print_stack("Dispatch", cpu, cpu->code_size);
 	else update_print_stack("Dispatch", cpu, get_code_index(stage->pc));
 	
 	return 0;
@@ -658,10 +671,15 @@ int execute(cpu_t* cpu) {
 					// search rob
 					rob_entry_t* rob = cpu->rob.entries;
 					for(int i=0; i<ROB_SIZE; i++) {
+						if(intFU->rob_idx == i) continue; // do not flush this insn
 						rob_entry_t* robe = &rob[i];
 						if(robe->taken && robe->cfid == cfid) {
 							strcpy(robe->opcode, "NOP");
 							robe->valid = 1; // no need to wait for sources
+			
+							// update print info
+							strcpy(cpu->print_info[get_code_index(robe->pc)].opcode, "NOP");
+
 						}
 					}
 
@@ -672,6 +690,9 @@ int execute(cpu_t* cpu) {
 						if(lsqe->taken && lsqe->cfid == cfid) {
 							strcpy(lsqe->opcode, "NOP");
 							lsqe->done= 1; // no need to wait for sources
+			
+							// update print info
+							strcpy(cpu->print_info[get_code_index(lsqe->pc)].opcode, "NOP");
 						}
 					}
 
@@ -684,6 +705,19 @@ int execute(cpu_t* cpu) {
 						cpu->memFU.busy = -1; // free resource
 						strcpy(cpu->memFU.opcode, "NOP");	
 					}
+			
+					// flush the decode and dispatch stage, if cfid match
+					if(cpu->stage[DRF].cfid == cfid) {
+						strcpy(cpu->stage[DRF].opcode, "NOP");
+					}
+					if(cpu->stage[DP].cfid == cfid) {
+						strcpy(cpu->stage[DP].opcode, "NOP");
+					}
+					
+					// stall fetch, decode, dispatch for 1 cycle
+					//cpu->stage[F].busy = 1;
+					//cpu->stage[DRF].busy = 1;
+					//cpu->stage[DP].busy = 1;	
 				
 					// free this cfid
 					cpu->cfid_freelist[cfid] = 0;	
@@ -758,6 +792,7 @@ int memory(cpu_t* cpu) {
 				memFU->u_rs2_val = lsqe->u_rs2_val;	// only used by stores
 				memFU->rob_idx = lsqe->rob_idx;
 				memFU->busy = MEM_FU_LAT - 1; // this cycle also counts toward the latency count, hence -1
+				memFU->cfid = lsqe->cfid;
 				// print info
 				memFU->print_idx = get_code_index(lsqe->pc);
 				
@@ -800,23 +835,26 @@ int commit(cpu_t* cpu) {
 		// get ROB entry at the head of ROB
 		rob_entry_t* robe = &cpu->rob.entries[ptr];
 		if(robe->valid) { // insn has wrote to URF 
-			// set arch reg mapping to URF
-			cpu->arch_regs[robe->rd].u_rd = robe->u_rd;
+			if(!is_nop(robe->opcode)) {
+				// set arch reg mapping to URF
+				cpu->arch_regs[robe->rd].u_rd = robe->u_rd;
+				
+				// update backend rename table
+				int old_u_rd = cpu->back_rename_table[robe->rd];
+				if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
+				cpu->back_rename_table[robe->rd] = robe->u_rd;
+
+				robe->taken = 0;
+				//robe->valid = 0;
+				//robe->pc = 0;
+				//u_rd->val = 0;
+
+				if(is_mem(robe->opcode)) {
+					cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
+					cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
+				}
+			} // not nop ; end
 			
-			// update backend rename table
-			int old_u_rd = cpu->back_rename_table[robe->rd];
-			if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
-			cpu->back_rename_table[robe->rd] = robe->u_rd;
-
-			robe->taken = 0;
-			//robe->valid = 0;
-			//robe->pc = 0;
-			//u_rd->val = 0;
-
-			if(is_mem(robe->opcode)) {
-				cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
-				cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
-			}
 			cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE; // update rob head_ptr		
 		
 			update_print_stack("Commit", cpu, get_code_index(robe->pc));
@@ -834,9 +872,9 @@ char no_more_insn(cpu_t* cpu) {
 	char done = 1;
 	int ptr = cpu->print_stack_ptr - 1;
 	for(int i=ptr; i>=0; i--) {
-		int idx = cpu->print_stack[i];
-		stage_t* stage = &cpu->print_info[idx];
-		if(strcmp(stage->name, "Commit") == 0) continue;
+		print_info_t* p = &cpu->print_stack[i];
+		stage_t* stage = &cpu->print_info[p->idx];
+		if(strcmp(p->name, "Commit") == 0) continue;
 		if(is_valid_insn(stage->opcode) && strcmp(stage->opcode, "NOP")) {
 			done = 0;
 			break;
@@ -869,9 +907,9 @@ int cpu_run(cpu_t* cpu) {
 			// print stage contents
 			int ptr = cpu->print_stack_ptr - 1;	
 			for(int i=ptr; i>=0; i--) {
-				int idx = cpu->print_stack[i];
-				stage_t* stage = &cpu->print_info[idx];
-				print_stage_content(stage);
+				print_info_t* p = &cpu->print_stack[i];
+				stage_t* stage = &cpu->print_info[p->idx];
+				print_stage_content(p->name, stage);
 			}
 		
 			print_cpu(cpu); // prints reg files, rob, lsq, etc...

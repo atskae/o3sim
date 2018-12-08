@@ -51,11 +51,11 @@ void print_insn(stage_t* stage) {
 
 }
 
-void print_stage_content(stage_t* stage) {
-	printf("%-15s: pc(%d) ", stage->name, stage->pc);
+void print_stage_content(char* name, stage_t* stage) {	
+	printf("%-15s: pc(%d) ", name, stage->pc);
 	print_insn(stage);	
-	if(strcmp(stage->name, "intFU") == 0 || strcmp(stage->name, "mulFU") == 0 || strcmp(stage->name, "memFU") == 0 ) {
-		printf("cfid %i ", stage->cfid);
+	if(strcmp(name, "intFU") == 0 || strcmp(name, "mulFU") == 0 || strcmp(name, "memFU") == 0 ) {
+		if(stage->cfid != -1) printf("cfid %i ", stage->cfid);
 		if(stage->busy > 1) {
 		//	int lat;
 		//	if(strcmp(stage->name, "intFU") == 0) lat = INT_FU_LAT;
@@ -149,21 +149,18 @@ void print_all_FU(cpu_t* cpu) {
 	stage_t* stage = &cpu->print_info[intFU->print_idx];
 	stage->busy = intFU->busy;
 	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
-	strcpy(stage->name, "intFU");
-	print_stage_content(stage);
+	print_stage_content("intFU", stage);
 
 	stage = &cpu->print_info[mulFU->print_idx];
 	stage->busy = mulFU->busy;
 	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
-	strcpy(stage->name, "mulFU");
-	print_stage_content(stage);
+	print_stage_content("mulFU", stage);
 	
 	printf("---Memory Function Unit---\n");
 	stage = &cpu->print_info[memFU->print_idx];
 	stage->busy = memFU->busy;
 	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
-	strcpy(stage->name, "memFU");
-	print_stage_content(stage);
+	print_stage_content("memFU", stage);
 
 }
 
@@ -181,7 +178,7 @@ void print_cpu(cpu_t* cpu) {
 }
 
 void update_print_stack(char* name, cpu_t* cpu, int idx) {		
-	strcpy(cpu->print_info[idx].name, name); // update stage name
-	cpu->print_stack[cpu->print_stack_ptr] = idx;
+	strcpy(cpu->print_stack[cpu->print_stack_ptr].name, name); // name of stage/FU
+	cpu->print_stack[cpu->print_stack_ptr].idx = idx;
 	cpu->print_stack_ptr++;
 }

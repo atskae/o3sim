@@ -63,9 +63,9 @@ int main(int argc, char* argv[]) {
 	
 			int ptr = cpu->print_stack_ptr - 1;	
 			for(int i=ptr; i>=0; i--) {
-				int idx = cpu->print_stack[i];
-				stage_t* stage = &cpu->print_info[idx];
-				print_stage_content(stage);
+				print_info_t* p = &cpu->print_stack[i];
+				stage_t* stage = &cpu->print_info[p->idx];
+				print_stage_content(p->name, stage);
 			}
 		
 			print_cpu(cpu); // prints reg files, rob, lsq, etc.
