@@ -33,7 +33,12 @@ cpu_t* cpu_init(const char* filename) {
 
 	memset(cpu->stage, 0, sizeof(stage_t) * NUM_STAGES);
 	memset(cpu->memory, 0, sizeof(int) * MEM_SIZE);
-			
+		
+	cpu->cfid = -1;
+	memset(cpu->cfid_freelist, 0, CFQ_SIZE);
+	cpu->cfq_head_ptr = 0;
+	cpu->cfq_tail_ptr = 0;
+	
 	// obtain instructions from .asm file	
 	cpu->code = create_code(filename, &cpu->code_size);
 	
@@ -91,6 +96,15 @@ int get_code_index(int pc) {
 	return (pc - CODE_START_ADDR) / 4;
 }
 
+char is_controlflow(char* opcode) {
+	if( strcmp(opcode, "BZ") 	== 0 ||
+		strcmp(opcode, "BNZ") 	== 0 ||
+		strcmp(opcode, "JUMP") 	== 0 ){
+		return 1;
+	}
+	else return 0;
+}
+
 char is_halt(char* opcode) {
 	return strcmp(opcode, "HALT") == 0;
 }
@@ -109,7 +123,8 @@ char is_intFU(char* opcode) {
 		strcmp(opcode, "ADDL") 	== 0 ||
 		strcmp(opcode, "SUBL") 	== 0 ||
 		strcmp(opcode, "LOAD") 	== 0 || // addr calculation
-		strcmp(opcode, "STORE") == 0 ){ // addr calculation
+		strcmp(opcode, "STORE") == 0 || // addr calculation
+		strcmp(opcode, "JUMP") 	== 0 ){ // addr calculation
 
 		return 1;
 	}
@@ -310,6 +325,8 @@ int dispatch(cpu_t* cpu) {
 				lsqe->taken = 1;
 				strcpy(lsqe->opcode, stage->opcode); // load or store
 				lsqe->mem_addr_valid = 0;	
+				lsqe->cfid = cpu->cfid; // control-flow insn
+
 				 // only for loads	
 				lsqe->u_rd = stage->u_rd;
 				// only for stores
@@ -330,17 +347,40 @@ int dispatch(cpu_t* cpu) {
 			rob_entry_t* robe = &rob->entries[rob_idx];
 			robe->taken = 1;
 			robe->valid = 0;
-			robe->commit_ready = 0;
 			strcpy(robe->opcode, stage->opcode);
 			robe->pc = stage->pc;
 			robe->rd = stage->rd;
 			robe->u_rd = stage->u_rd;
 			robe->lsq_idx = lsq_idx;		
-	
+			robe->cfid = cpu->cfid;	// control-flow id
+
 			if(is_mem(stage->opcode) && lsq_idx != -1) cpu->lsq.entries[lsq_idx].rob_idx = rob_idx;
 			if(is_halt(stage->opcode)) {
 				robe->valid = 1;
-				robe->commit_ready = 1;
+			} if(is_controlflow(stage->opcode)) { // BZ, BNZ, JUMP
+				// look for a free cfid
+				char found = 0;
+				for(int i=0; i<CFQ_SIZE; i++) {
+					if(!cpu->cfid_freelist[i]) {
+						cpu->cfid = i;
+						found = 1;
+						break;	
+					}
+				}
+				if(!found) {
+					printf("No more cfids. Insert logic here...\n");
+				}
+
+				// add new cfid to cfq
+				cpu->cfq[cpu->cfq_tail_ptr] = cpu->cfid;
+				cpu->cfq_tail_ptr = (cpu->cfq_tail_ptr + 1) % CFQ_SIZE;
+
+				// save the state of URF and rename table ; in case branch-taken, must restore URF and rename table
+				memcpy(cpu->saved_state[cpu->cfid].unified_regs, cpu->unified_regs, NUM_UNIFIED_REGS * sizeof(ureg_t));
+				memcpy(cpu->saved_state[cpu->cfid].front_rename_table, cpu->front_rename_table, NUM_ARCH_REGS * sizeof(int));
+
+				// re-assign new cfid to this branch insn
+				robe->cfid = cpu->cfid;	
 			}
 	
 			rob->tail_ptr = (rob->tail_ptr + 1) % ROB_SIZE;	
@@ -370,6 +410,9 @@ int dispatch(cpu_t* cpu) {
 	
 					iqe->u_rs2 = stage->u_rs2;
 					iqe->u_rs2_ready = 0;
+	
+					// control-flow id
+					iqe->cfid = cpu->cfid;	
 	
 					// check if insn do not need particular source registers ; set them to ready so they do not wait for them 
 					
@@ -417,6 +460,7 @@ int dispatch(cpu_t* cpu) {
 		p->rob_idx = rob_idx;
 		p->iq_idx = iq_idx;
 		p->lsq_idx = lsq_idx;
+		p->cfid = cpu->cfid;
 	}
 	
 	if(!is_valid_insn(stage->opcode)) update_print_stack("Dispatch", cpu, cpu->code_size + DP);
@@ -429,7 +473,10 @@ int issue(cpu_t* cpu) {
 			
 	// look for the earliest dispatched insn with all operands ready and send to FU	
 	iq_entry_t* iq = cpu->iq;
+	int earliest_cycle_intFU = INT_MAX;
 	int earliest_intFU = INT_MAX;
+	
+	int earliest_cycle_mulFU = INT_MAX;
 	int earliest_mulFU = INT_MAX;
 
 	for(int i=0; i<IQ_SIZE; i++) {
@@ -437,11 +484,11 @@ int issue(cpu_t* cpu) {
 		if(!iqe->taken)	continue;
 	
 		// check if any source registers are ready
-		if(cpu->unified_regs[iqe->u_rs1].valid) {
+		if(!iqe->u_rs1_ready && cpu->unified_regs[iqe->u_rs1].valid) {
 			iqe->u_rs1_ready = 1;
 			iqe->u_rs1_val = cpu->unified_regs[iqe->u_rs1].val;
 		}
-		if(cpu->unified_regs[iqe->u_rs2].valid) {
+		if(!iqe->u_rs2_ready && cpu->unified_regs[iqe->u_rs2].valid) {
 			iqe->u_rs2_ready = 1;
 			iqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;
 		}
@@ -450,12 +497,18 @@ int issue(cpu_t* cpu) {
 	
 		if(cpu->intFU.busy <= 0 && is_intFU(iqe->opcode)) { // if this FU is free and this insn goes to intFU
 			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {	
-				if(iqe->cycle_dispatched < earliest_intFU) earliest_intFU = i;
+				if(iqe->cycle_dispatched < earliest_cycle_intFU) {
+					earliest_intFU = i;
+					earliest_cycle_intFU = iqe->cycle_dispatched; 
+				}
 			}
 		}
 		if(cpu->mulFU.busy <= 0 && (strcmp(iqe->opcode, "MUL") == 0)) {	
 			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {
-				if(iqe->cycle_dispatched < earliest_mulFU) earliest_mulFU = i;
+				if(iqe->cycle_dispatched < earliest_cycle_mulFU) {
+					earliest_mulFU = i;
+					earliest_cycle_mulFU = iqe->cycle_dispatched; 
+				}
 			}
 		}
 	}	
@@ -472,6 +525,7 @@ int issue(cpu_t* cpu) {
 		intFU->rob_idx = iqe->rob_idx;
 		strcpy(intFU->opcode, iqe->opcode);
 		intFU->u_rd = robe->u_rd; // target register
+		intFU->cfid = robe->cfid; // control-flow id
 
 		intFU->imm = iqe->imm;
 		intFU->u_rs1_val = iqe->u_rs1_val;
@@ -495,6 +549,7 @@ int issue(cpu_t* cpu) {
 		mulFU->rob_idx = iqe->rob_idx;
 		strcpy(mulFU->opcode, iqe->opcode);
 		mulFU->u_rd = robe->u_rd; // target register
+		mulFU->cfid = robe->cfid; // control-flow id
 
 		mulFU->imm = iqe->imm;
 		mulFU->u_rs1_val = iqe->u_rs1_val;
@@ -568,6 +623,80 @@ int execute(cpu_t* cpu) {
 			else if(strcmp(intFU->opcode, "XOR") == 0) u_rd->val = intFU->u_rs1_val ^ intFU->u_rs2_val;	
 			else if(strcmp(intFU->opcode, "ADDL") == 0) u_rd->val = intFU->u_rs1_val + intFU->imm;
 			else if(strcmp(intFU->opcode, "SUBL") == 0) u_rd->val = intFU->u_rs1_val - intFU->imm;		
+				
+			else if(strcmp(intFU->opcode, "JUMP") == 0) {
+				cpu->pc = intFU->u_rs1_val + intFU->imm;
+
+				// jump is always taken ; restore URF and rename table	
+				memcpy(cpu->unified_regs, cpu->saved_state[cpu->cfid].unified_regs, NUM_UNIFIED_REGS * sizeof(ureg_t));
+				memcpy(cpu->front_rename_table, cpu->saved_state[cpu->cfid].front_rename_table, NUM_ARCH_REGS * sizeof(int));
+
+				// search where this cfid starts in the cfq
+				int temp_head_ptr = 0;
+				for(int i=cpu->cfq_head_ptr; i<CFQ_SIZE; i++) {
+					if(cpu->cfq[i] == intFU->cfid) {
+						temp_head_ptr = i;
+						break;
+					}
+				}
+
+				// flush all instructions with cfids from temp_head_ptr to cfq_tail_ptr
+				int new_tail_ptr = temp_head_ptr; // save the value
+				while(temp_head_ptr != cpu->cfq_tail_ptr) {	
+					// convert all insn with matching cfid to NOPs
+					int cfid = cpu->cfq[temp_head_ptr];
+					// search iq
+					iq_entry_t* iq = cpu->iq;
+					for(int i=0; i<IQ_SIZE; i++) {
+						iq_entry_t* iqe = &iq[i];
+						if(!iqe->taken) continue;
+			
+						if(iqe->cfid == cfid) {
+							iqe->taken = 0;	// deallocate entry
+						}	
+					}
+					// search rob
+					rob_entry_t* rob = cpu->rob.entries;
+					for(int i=0; i<ROB_SIZE; i++) {
+						rob_entry_t* robe = &rob[i];
+						if(robe->taken && robe->cfid == cfid) {
+							strcpy(robe->opcode, "NOP");
+							robe->valid = 1; // no need to wait for sources
+						}
+					}
+
+					// search lsq
+					lsq_entry_t* lsq = cpu->lsq.entries;
+					for(int i=0; i<LSQ_SIZE; i++) {
+						lsq_entry_t* lsqe = &lsq[i];
+						if(lsqe->taken && lsqe->cfid == cfid) {
+							strcpy(lsqe->opcode, "NOP");
+							lsqe->done= 1; // no need to wait for sources
+						}
+					}
+
+					// check FUs
+					if(cpu->mulFU.cfid == cfid) {
+						cpu->mulFU.busy = -1; // free resource
+						strcpy(cpu->mulFU.opcode, "NOP");	
+					}
+					if(cpu->memFU.cfid == cfid) {
+						cpu->memFU.busy = -1; // free resource
+						strcpy(cpu->memFU.opcode, "NOP");	
+					}
+				
+					// free this cfid
+					cpu->cfid_freelist[cfid] = 0;	
+					temp_head_ptr = (temp_head_ptr + 1) % CFQ_SIZE;
+				
+				}
+				cpu->cfq_tail_ptr = new_tail_ptr;
+	
+				update_print_stack("Execute", cpu, intFU->print_idx);		
+				robe->valid = 1;	
+				return 0;
+			} 
+
 			if(u_rd->val == 0) u_rd->zero_flag = 1;
 			u_rd->valid = 1;
 
@@ -663,26 +792,6 @@ int memory(cpu_t* cpu) {
 	return 0;
 }
 
-//int writeback(cpu_t* cpu) {
-//
-//	// write result to URF	
-//	int head_ptr = cpu->rob.head_ptr;
-//	// get ROB entry at the head of ROB
-//	rob_entry_t* robe = &cpu->rob.entries[head_ptr];
-//	if(robe->valid) { // insn has completed and insn writes to a register
-//		
-//		if(has_rd(robe->opcode)) { // write result to URF
-//			cpu->unified_regs[robe->u_rd].val = u_rd->val;
-//			cpu->unified_regs[robe->u_rd].valid = 1;
-//		}
-//		robe->commit_ready = 1;
-//	
-//		update_print_stack("Writeback", cpu, get_code_index(robe->pc));
-//	} 
-//
-//	return 0;
-//}
-
 int commit(cpu_t* cpu) {
 	
 	for(int i=0; i<MAX_COMMIT_NUM; i++) {		
@@ -746,10 +855,8 @@ int cpu_run(cpu_t* cpu) {
 		cpu->print_stack_ptr = 0; // reset
 
 		commit(cpu);
-		//writeback(cpu);
 		memory(cpu);
 		execute(cpu);
-		//issue(cpu);
 		dispatch(cpu);
 		decode(cpu);
 		fetch(cpu);

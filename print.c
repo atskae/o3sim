@@ -55,6 +55,7 @@ void print_stage_content(stage_t* stage) {
 	printf("%-15s: pc(%d) ", stage->name, stage->pc);
 	print_insn(stage);	
 	if(strcmp(stage->name, "intFU") == 0 || strcmp(stage->name, "mulFU") == 0 || strcmp(stage->name, "memFU") == 0 ) {
+		printf("cfid %i ", stage->cfid);
 		if(stage->busy > 1) {
 		//	int lat;
 		//	if(strcmp(stage->name, "intFU") == 0) lat = INT_FU_LAT;
@@ -79,10 +80,10 @@ void print_rename_table(cpu_t* cpu) {
 void print_iq(iq_entry_t* iq) {
 	printf("---Instruction Queue---\n");
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "dispatch", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "dispatch", "cfid", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm");
 	for(int i=0; i<IQ_SIZE; i++) {
 		iq_entry_t* iqe = &iq[i];
-		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm);	
+		printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->cfid, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm);	
 	}
 }
 
@@ -103,10 +104,10 @@ void print_lsq(lsq_t* lsq) {
 	printf("%-9s %-9s\n", "head_ptr", "tail_ptr");
 	printf("%-9i %-9i\n", lsq->head_ptr, lsq->tail_ptr);
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "pc", "opcode", "valid", "mem_addr", "rd", "rs2_rdy", "rs2", "rs2_val");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "cfid", "pc", "opcode", "valid", "mem_addr", "rd", "rs2_rdy", "rs2", "rs2_val");
 	for(int i=0; i<LSQ_SIZE; i++) {
 		lsq_entry_t* l = &lsq->entries[i];
-		printf("%-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i\n", i, l->taken, l->pc, l->opcode, l->mem_addr_valid, l->mem_addr, l->u_rd, l->u_rs2_ready, l->u_rs2, l->u_rs2_val);	
+		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i\n", i, l->taken, l->cfid, l->pc, l->opcode, l->mem_addr_valid, l->mem_addr, l->u_rd, l->u_rs2_ready, l->u_rs2, l->u_rs2_val);	
 	}
 }
 
@@ -115,10 +116,10 @@ void print_rob(rob_t* rob) {
 	printf("%-9s %-9s\n", "head_ptr", "tail_ptr");
 	printf("%-9i %-9i\n", rob->head_ptr, rob->tail_ptr);
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "valid", "pc", "opcode", "rd", "lsq_idx");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "valid", "cfid", "pc", "opcode", "rd", "lsq_idx");
 	for(int i=0; i<ROB_SIZE; i++) {
 		rob_entry_t* r = &rob->entries[i];
-		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i\n", i, r->taken, r->valid, r->pc, r->opcode, r->u_rd, r->lsq_idx);	
+		printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i\n", i, r->taken, r->valid, r->cfid, r->pc, r->opcode, r->u_rd, r->lsq_idx);	
 	}
 }
 
@@ -172,7 +173,7 @@ void print_cpu(cpu_t* cpu) {
 	
 	print_rob(&cpu->rob);
 	print_lsq(&cpu->lsq);
-	print_memory(cpu);
+//	print_memory(cpu);
 	print_iq(cpu->iq);
 	
 	print_all_FU(cpu);	

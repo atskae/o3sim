@@ -16,6 +16,8 @@
 #define ROB_SIZE 32 // max entries of reorder buffer
 #define LSQ_SIZE 20 // max entries in load-store queue
 
+#define CFQ_SIZE 8
+
 #define MAX_COMMIT_NUM 2 // max number of instructions that can commit
 
 #define INT_FU_LAT 1
@@ -64,6 +66,7 @@ typedef struct stage_t {
 	int rob_idx;
 	int iq_idx;
 	int lsq_idx;
+	int cfid;
 	
 } stage_t;
 
@@ -84,6 +87,9 @@ typedef struct fu_t {
 
 	// only used by memFU
 	int mem_addr;
+
+	// control insn id
+	int cfid;
 
 	int busy;
 
@@ -118,9 +124,9 @@ typedef struct rob_entry_t {
 	//int u_rd_val; // the actual register value is in the URF
 	char zero_flag;
 
-	char commit_ready; // completed writeback
-
 	int lsq_idx; // load-store queue index ; only needed for memory operations
+	int cfid; // control flow insn id
+
 } rob_entry_t;
 
 typedef struct rob_t {	
@@ -149,6 +155,8 @@ typedef struct iq_entry_t {
 
 	int rob_idx; // where to send computed value
 	int lsq_idx; // where to send computed memory address ; only needed for memory operations
+	int cfid; // control flow id
+
 } iq_entry_t;
 
 // load-store queue
@@ -157,6 +165,7 @@ typedef struct lsq_entry_y {
 	char done; // memory operation done, did not commit
 	int rob_idx;
 	int pc; 
+	int cfid; // control-flow id
 
 	char opcode[128]; // load or store
 	char mem_addr_valid;
@@ -176,6 +185,12 @@ typedef struct lsq_t {
 	int tail_ptr;
 	lsq_entry_t entries[LSQ_SIZE];
 } lsq_t;
+
+// for control-flow insn
+typedef struct saved_state_t {
+	ureg_t unified_regs[NUM_UNIFIED_REGS];
+	int front_rename_table[NUM_ARCH_REGS];	
+} saved_state_t;
 
 typedef struct cpu_t {
 	int clock;
@@ -203,6 +218,14 @@ typedef struct cpu_t {
 	fu_t mulFU;
 	fu_t memFU; 
 
+	/* control flow handling (BZ, BNZ, JUMP) */
+	int cfid; // the current cfid ; change with every control-flow insn
+	char cfid_freelist[CFQ_SIZE]; // list of free ids ; index = id, value = free/taken
+	int cfq[CFQ_SIZE];
+	int cfq_head_ptr;
+	int cfq_tail_ptr;
+	saved_state_t saved_state[CFQ_SIZE]; // index by using cfid
+
 	// holds all instruction information ; to index into this, use get_code_index(pc)
 	stage_t* print_info;
 
@@ -229,7 +252,6 @@ int decode(cpu_t* cpu);
 int issue(cpu_t* cpu);
 int execute(cpu_t* cpu);
 int memory(cpu_t* cpu);
-int writeback(cpu_t* cpu); // write to unified reg file
 int commit(cpu_t* cpu); // insn cannot writeback and commit in the same cycle ; write to arch_reg file
 
 #endif // CPU_H
