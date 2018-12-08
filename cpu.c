@@ -91,6 +91,10 @@ int get_code_index(int pc) {
 	return (pc - CODE_START_ADDR) / 4;
 }
 
+char is_nop(char* opcode) {
+	return strcmp(opcode, "NOP") == 0;
+}
+
 char is_intFU(char* opcode) {
 	if( strcmp(opcode, "ADD") 	== 0 ||
 		strcmp(opcode, "SUB") 	== 0 ||
@@ -166,12 +170,13 @@ int fetch(cpu_t* cpu) {
 		insn_t* insn = &cpu->code[get_code_index(cpu->pc)];
 		strcpy(stage->opcode, insn->opcode);	
 		if(!is_valid_insn(stage->opcode)) {
-			stage->stalled = 1;
 			stage->pc = -1;
-			cpu->stage[DRF] = cpu->stage[F];
+			cpu->stage[DRF] = cpu->stage[F];	
+			cpu->stage[F].stalled = 1;
 			update_print_stack("Fetch", cpu, cpu->code_size + F);
 			return 0;	
 		}
+		if(is_nop(stage->opcode)) return 0;
 
 		stage->rd = insn->rd;
 		stage->rs1 = insn->rs1;
@@ -202,20 +207,19 @@ int fetch(cpu_t* cpu) {
 	return 0;
 }
 
+// rename instruction and obtain ready operands
 int decode(cpu_t* cpu) {
 	stage_t* stage = &cpu->stage[DRF];
-	if (!stage->busy && !stage->stalled) {
+	if(!stage->busy && !stage->stalled) {
 		
 		if(!is_valid_insn(stage->opcode)) {
-			stage->stalled = 1;
 			stage->pc = -1;
+			cpu->stage[DP] = cpu->stage[DRF]; 	
+			cpu->stage[DRF].stalled = 1;
 			update_print_stack("Decode", cpu, cpu->code_size + DRF);
 			return 0;	
 		}
 
-		/*
-			Rename instruction
-		*/
 		// rename the source registers ; if no source, renamed register is simply -1
 		stage->u_rs1 = cpu->front_rename_table[stage->rs1];
 		stage->u_rs2 = cpu->front_rename_table[stage->rs2];	
@@ -247,10 +251,37 @@ int decode(cpu_t* cpu) {
 			
 			cpu->unified_regs[stage->u_rd].valid = 0;	
 		}
-			
-		/*
-			Create LSQ (if mem), IQ, and ROB entries
-		*/		
+		
+		// update print info
+		stage_t* p = &cpu->print_info[get_code_index(stage->pc)];
+		p->u_rd = stage->u_rd;
+		p->u_rs1 = stage->u_rs1;
+		p->u_rs2 = stage->u_rs2;
+
+		cpu->stage[DP] = cpu->stage[DRF]; // move to dispatch
+
+	}
+	
+	if(!is_valid_insn(stage->opcode)) update_print_stack("Decode", cpu, cpu->code_size + DRF);
+	else update_print_stack("Decode", cpu, get_code_index(stage->pc));
+	
+	return 0;
+}
+
+// create LSQ, IQ, and ROB entries
+int dispatch(cpu_t* cpu) {
+	
+	stage_t* stage = &cpu->stage[DP];
+	if(!stage->busy && !stage->stalled) {	
+		
+		if(!is_valid_insn(stage->opcode)) {
+			stage->pc = -1;	
+			cpu->stage[DP].stalled = 1;
+			update_print_stack("Dispatch", cpu, cpu->code_size + DP);
+			return 0;	
+		}
+		if(is_nop(stage->opcode)) return 0;
+	
 		// create an LSQ entry if this is a memory operation	
 		int lsq_idx = -1; // IQ entry needs this value
 		if(is_mem(stage->opcode)) {
@@ -277,8 +308,7 @@ int decode(cpu_t* cpu) {
 				lsq->tail_ptr = (lsq->tail_ptr + 1) % LSQ_SIZE;
 			}
 		} // create LSQ entry ; end
-
-	
+		
 		// create ROB entry
 		rob_t* rob = &cpu->rob;
 		int rob_idx = -1;
@@ -289,21 +319,18 @@ int decode(cpu_t* cpu) {
 			rob_entry_t* robe = &rob->entries[rob_idx];
 			robe->taken = 1;
 			robe->valid = 0;
-			robe->commit_ready= 0;
+			robe->commit_ready = 0;
 			strcpy(robe->opcode, stage->opcode);
 			robe->pc = stage->pc;
 			robe->rd = stage->rd;
 			robe->u_rd = stage->u_rd;
 			robe->lsq_idx = lsq_idx;		
-
-			if(is_mem(stage->opcode) && lsq_idx != -1) {
-				cpu->lsq.entries[lsq_idx].rob_idx = rob_idx;
-			}
-			
-			rob->tail_ptr = (rob->tail_ptr + 1) % ROB_SIZE;
 	
-		}
-
+			if(is_mem(stage->opcode) && lsq_idx != -1) cpu->lsq.entries[lsq_idx].rob_idx = rob_idx;
+	
+			rob->tail_ptr = (rob->tail_ptr + 1) % ROB_SIZE;	
+		} // create ROB entry ; end
+	
 		// create IQ entry
 		iq_entry_t* iq = cpu->iq;
 		int iq_idx = -1;	
@@ -314,20 +341,20 @@ int decode(cpu_t* cpu) {
 				iq_idx = i;
 				iqe->taken = 1;
 				iqe->cycle_dispatched = cpu->clock;
-
+	
 				iqe->pc = stage->pc; // just for printing
 				iqe->rob_idx = rob_idx;			
 				iqe->lsq_idx = lsq_idx;
-
+	
 				strcpy(iqe->opcode, stage->opcode);
 				iqe->imm = stage->imm;
 				
 				iqe->u_rs1 = stage->u_rs1;
 				iqe->u_rs1_ready = 0;
-
+	
 				iqe->u_rs2 = stage->u_rs2;
 				iqe->u_rs2_ready = 0;
-
+	
 				// check if insn do not need particular source registers ; set them to ready so they do not wait for them 
 				
 				// insn with only literal	
@@ -345,7 +372,7 @@ int decode(cpu_t* cpu) {
 				if(strcmp(iqe->opcode, "JUMP") == 0) {
 					iqe->u_rs2_ready = 1;
 				}	
-
+	
 				// check if any source registers are ready
 				if(cpu->unified_regs[iqe->u_rs1].valid) {
 					iqe->u_rs1_ready = 1;
@@ -358,24 +385,20 @@ int decode(cpu_t* cpu) {
 			
 				break;
 			}
-		}
+		} // create IQ entry ; end
 		if(iq_idx < 0) {
 			printf("IQ full... insert logic here...\n");
 		}	
 	
 		// update print info
 		stage_t* p = &cpu->print_info[get_code_index(stage->pc)];
-		p->u_rd = stage->u_rd;
-		p->u_rs1 = stage->u_rs1;
-		p->u_rs2 = stage->u_rs2;
 		p->rob_idx = rob_idx;
 		p->iq_idx = iq_idx;
 		p->lsq_idx = lsq_idx;
-
 	}
 	
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Decode", cpu, cpu->code_size + DRF);
-	else update_print_stack("Decode", cpu, get_code_index(stage->pc));
+	if(!is_valid_insn(stage->opcode)) update_print_stack("Dispatch", cpu, cpu->code_size + DP);
+	else update_print_stack("Dispatch", cpu, get_code_index(stage->pc));
 	
 	return 0;
 }
@@ -403,12 +426,12 @@ int issue(cpu_t* cpu) {
 
 		// search for the earliest ready instruction for each FU
 	
-		if(cpu->intFU.busy < 0 && is_intFU(iqe->opcode)) { // if this FU is free and this insn goes to intFU
+		if(cpu->intFU.busy <= 0 && is_intFU(iqe->opcode)) { // if this FU is free and this insn goes to intFU
 			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {	
 				if(iqe->cycle_dispatched < earliest_intFU) earliest_intFU = i;
 			}
 		}
-		if(cpu->mulFU.busy < 0 && (strcmp(iqe->opcode, "MUL") == 0)) {	
+		if(cpu->mulFU.busy <= 0 && (strcmp(iqe->opcode, "MUL") == 0)) {	
 			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {
 				if(iqe->cycle_dispatched < earliest_mulFU) earliest_mulFU = i;
 			}
@@ -436,7 +459,7 @@ int issue(cpu_t* cpu) {
 
 		// printing stuff
 		intFU->print_idx = get_code_index(iqe->pc);
-		update_print_stack("Issue", cpu, intFU->print_idx);
+		//update_print_stack("Issue", cpu, intFU->print_idx);
 	}
 
 	// send ready insn to mulFU
@@ -459,7 +482,7 @@ int issue(cpu_t* cpu) {
 
 		// printing stuff
 		mulFU->print_idx = get_code_index(iqe->pc);
-		update_print_stack("Issue", cpu, mulFU->print_idx);
+		//update_print_stack("Issue", cpu, mulFU->print_idx);
 	}
 	
 	return 0;
@@ -499,6 +522,8 @@ void broadcast(cpu_t* cpu, int u_rd, int u_rd_val) {
 
 int execute(cpu_t* cpu) {
 
+	issue(cpu); // selects an instruction that is ready
+
 	// check each FU
 
 	// intFU	
@@ -507,23 +532,24 @@ int execute(cpu_t* cpu) {
 	if(!intFU->busy) {
 
 		rob_entry_t* robe = &cpu->rob.entries[intFU->rob_idx];	
-
+		ureg_t* u_rd = &cpu->unified_regs[robe->u_rd];
 		// perform computation
 		if(strcmp(intFU->opcode, "LOAD") == 0 || strcmp(intFU->opcode, "STORE") == 0) { // memory address computation
 			lsq_entry_t* lsqe = &cpu->lsq.entries[robe->lsq_idx];
 			lsqe->mem_addr = intFU->u_rs1_val + intFU->imm;
 			lsqe->mem_addr_valid = 1;
 		} else { // arithmetic insn	
-			if(strcmp(intFU->opcode, "MOVC") == 0) robe->u_rd_val = intFU->imm + 0;	
-			else if(strcmp(intFU->opcode, "ADD") == 0) robe->u_rd_val = intFU->u_rs1_val + intFU->u_rs2_val;
-			else if(strcmp(intFU->opcode, "SUB") == 0) robe->u_rd_val = intFU->u_rs1_val - intFU->u_rs2_val;
-			else if(strcmp(intFU->opcode, "AND") == 0) robe->u_rd_val = intFU->u_rs1_val & intFU->u_rs2_val;
-			else if(strcmp(intFU->opcode, "XOR") == 0) robe->u_rd_val = intFU->u_rs1_val ^ intFU->u_rs2_val;	
-			else if(strcmp(intFU->opcode, "ADDL") == 0) robe->u_rd_val = intFU->u_rs1_val + intFU->imm;
-			else if(strcmp(intFU->opcode, "SUBL") == 0) robe->u_rd_val = intFU->u_rs1_val - intFU->imm;		
-				
+			if(strcmp(intFU->opcode, "MOVC") == 0) u_rd->val = intFU->imm + 0;	
+			else if(strcmp(intFU->opcode, "ADD") == 0) u_rd->val = intFU->u_rs1_val + intFU->u_rs2_val;
+			else if(strcmp(intFU->opcode, "SUB") == 0) u_rd->val = intFU->u_rs1_val - intFU->u_rs2_val;
+			else if(strcmp(intFU->opcode, "AND") == 0) u_rd->val = intFU->u_rs1_val & intFU->u_rs2_val;
+			else if(strcmp(intFU->opcode, "XOR") == 0) u_rd->val = intFU->u_rs1_val ^ intFU->u_rs2_val;	
+			else if(strcmp(intFU->opcode, "ADDL") == 0) u_rd->val = intFU->u_rs1_val + intFU->imm;
+			else if(strcmp(intFU->opcode, "SUBL") == 0) u_rd->val = intFU->u_rs1_val - intFU->imm;		
+			u_rd->valid = 1;
+
 			// broadcast ready value to IQ and LSQ
-			broadcast(cpu, robe->u_rd, robe->u_rd_val);
+			broadcast(cpu, robe->u_rd, u_rd->val);
 			robe->valid = 1;	
 		}
 				
@@ -534,11 +560,14 @@ int execute(cpu_t* cpu) {
 	mulFU->busy--;
 	if(!mulFU->busy) {
 		rob_entry_t* robe = &cpu->rob.entries[mulFU->rob_idx];	
-		robe->u_rd_val = mulFU->u_rs1_val * mulFU->u_rs2_val;
-		robe->valid = 1;
+		
+		ureg_t* u_rd = &cpu->unified_regs[robe->u_rd];
+		u_rd->val = mulFU->u_rs1_val * mulFU->u_rs2_val; // the value is written directly to URF
+		u_rd->valid = 1;
 		
 		// broadcast ready value to IQ
-		broadcast(cpu, robe->u_rd, robe->u_rd_val);
+		broadcast(cpu, robe->u_rd, u_rd->val);
+		robe->valid = 1;
 
 		update_print_stack("Execute", cpu, mulFU->print_idx);		
 	}	
@@ -576,7 +605,7 @@ int memory(cpu_t* cpu) {
 				memFU->mem_addr = lsqe->mem_addr;
 				memFU->u_rs2_val = lsqe->u_rs2_val;	// only used by stores
 				memFU->rob_idx = lsqe->rob_idx;
-				memFU->busy = MEM_FU_LAT;
+				memFU->busy = MEM_FU_LAT - 1; // this cycle also counts toward the latency count, hence -1
 				// print info
 				memFU->print_idx = get_code_index(lsqe->pc);
 				
@@ -591,12 +620,13 @@ int memory(cpu_t* cpu) {
 
 		head_ptr = cpu->rob.head_ptr;
 		rob_entry_t* robe = &cpu->rob.entries[head_ptr];
+		ureg_t* u_rd = &cpu->unified_regs[robe->u_rd];
 		assert(robe->pc == lsqe->pc);
 
 		if(strcmp(memFU->opcode, "LOAD") == 0) {
-			robe->u_rd_val = cpu->memory[memFU->mem_addr];
+			u_rd->val = cpu->memory[memFU->mem_addr];
 			// broadcast ready value to IQ
-			broadcast(cpu, robe->u_rd, robe->u_rd_val);
+			broadcast(cpu, robe->u_rd, u_rd->val);
 		}
 		else if(strcmp(memFU->opcode, "STORE") == 0) {
 			cpu->memory[memFU->mem_addr] = memFU->u_rs2_val;
@@ -610,25 +640,25 @@ int memory(cpu_t* cpu) {
 	return 0;
 }
 
-int writeback(cpu_t* cpu) {
-
-	// write result to URF	
-	int head_ptr = cpu->rob.head_ptr;
-	// get ROB entry at the head of ROB
-	rob_entry_t* robe = &cpu->rob.entries[head_ptr];
-	if(robe->valid) { // insn has completed and insn writes to a register
-		
-		if(has_rd(robe->opcode)) { // write result to URF
-			cpu->unified_regs[robe->u_rd].val = robe->u_rd_val;
-			cpu->unified_regs[robe->u_rd].valid = 1;
-		}
-		robe->commit_ready = 1;
-	
-		update_print_stack("Writeback", cpu, get_code_index(robe->pc));
-	} 
-
-	return 0;
-}
+//int writeback(cpu_t* cpu) {
+//
+//	// write result to URF	
+//	int head_ptr = cpu->rob.head_ptr;
+//	// get ROB entry at the head of ROB
+//	rob_entry_t* robe = &cpu->rob.entries[head_ptr];
+//	if(robe->valid) { // insn has completed and insn writes to a register
+//		
+//		if(has_rd(robe->opcode)) { // write result to URF
+//			cpu->unified_regs[robe->u_rd].val = u_rd->val;
+//			cpu->unified_regs[robe->u_rd].valid = 1;
+//		}
+//		robe->commit_ready = 1;
+//	
+//		update_print_stack("Writeback", cpu, get_code_index(robe->pc));
+//	} 
+//
+//	return 0;
+//}
 
 int commit(cpu_t* cpu) {
 	
@@ -637,7 +667,7 @@ int commit(cpu_t* cpu) {
 		// release ROB entry
 		// get ROB entry at the head of ROB
 		rob_entry_t* robe = &cpu->rob.entries[ptr];
-		if(robe->commit_ready) { // insn has wrote to URF 
+		if(robe->valid) { // insn has wrote to URF 
 			// set arch reg mapping to URF
 			cpu->arch_regs[robe->rd].u_rd = robe->u_rd;
 			
@@ -649,7 +679,7 @@ int commit(cpu_t* cpu) {
 			robe->taken = 0;
 			//robe->valid = 0;
 			//robe->pc = 0;
-			//robe->u_rd_val = 0;
+			//u_rd->val = 0;
 
 			if(is_mem(robe->opcode)) {
 				cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
@@ -693,10 +723,11 @@ int cpu_run(cpu_t* cpu) {
 		cpu->print_stack_ptr = 0; // reset
 
 		commit(cpu);
-		writeback(cpu);
+		//writeback(cpu);
 		memory(cpu);
 		execute(cpu);
-		issue(cpu);
+		//issue(cpu);
+		dispatch(cpu);
 		decode(cpu);
 		fetch(cpu);
 		

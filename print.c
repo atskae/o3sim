@@ -55,14 +55,14 @@ void print_stage_content(stage_t* stage) {
 	printf("%-15s: pc(%d) ", stage->name, stage->pc);
 	print_insn(stage);	
 	if(strcmp(stage->name, "intFU") == 0 || strcmp(stage->name, "mulFU") == 0 || strcmp(stage->name, "memFU") == 0 ) {
-		if(stage->busy > 0) {
-			int lat;
-			if(strcmp(stage->name, "intFU") == 0) lat = INT_FU_LAT;
-			else if(strcmp(stage->name, "mulFU") == 0) lat = MUL_FU_LAT;
-			else lat = MEM_FU_LAT;
-			
-			if(stage->busy == lat) printf("*issued ");
-			else printf("busy %i ", stage->busy);
+		if(stage->busy > 1) {
+		//	int lat;
+		//	if(strcmp(stage->name, "intFU") == 0) lat = INT_FU_LAT;
+		//	else if(strcmp(stage->name, "mulFU") == 0) lat = MUL_FU_LAT;
+		//	else lat = MEM_FU_LAT;
+		//	
+		//	if(stage->busy == lat) printf("*issued ");
+			printf("busy %i ", stage->busy);
 		}
 	}	
 	printf("\n");
@@ -115,10 +115,10 @@ void print_rob(rob_t* rob) {
 	printf("%-9s %-9s\n", "head_ptr", "tail_ptr");
 	printf("%-9i %-9i\n", rob->head_ptr, rob->tail_ptr);
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "valid", "pc", "opcode", "rd", "val", "lsq_idx");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "valid", "pc", "opcode", "rd", "lsq_idx");
 	for(int i=0; i<ROB_SIZE; i++) {
 		rob_entry_t* r = &rob->entries[i];
-		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i\n", i, r->taken, r->valid, r->pc, r->opcode, r->u_rd, r->u_rd_val, r->lsq_idx);	
+		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i\n", i, r->taken, r->valid, r->pc, r->opcode, r->u_rd, r->lsq_idx);	
 	}
 }
 

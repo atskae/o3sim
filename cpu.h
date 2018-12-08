@@ -28,7 +28,7 @@
 
 */
 
-enum { F, DRF, IS, EX, MEM, WB, CM, NUM_STAGES };
+enum { F, DRF, DP, IS, EX, MEM, WB, CM, NUM_STAGES };
 
 typedef struct insn_t {
 	char opcode[128];
@@ -115,7 +115,7 @@ typedef struct rob_entry_t {
 	
 	char valid; // if insn completed
 	int u_rd; // unified destination register
-	int u_rd_val; // register value	
+	//int u_rd_val; // the actual register value is in the URF
 	char zero_flag;
 
 	char commit_ready; // completed writeback
