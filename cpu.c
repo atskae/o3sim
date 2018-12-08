@@ -100,7 +100,8 @@ int get_code_index(int pc) {
 char is_controlflow(char* opcode) {
 	if( strcmp(opcode, "BZ") 	== 0 ||
 		strcmp(opcode, "BNZ") 	== 0 ||
-		strcmp(opcode, "JUMP") 	== 0 ){
+		strcmp(opcode, "JUMP") 	== 0 ||
+		strcmp(opcode, "JAL") 	== 0 ){
 		return 1;
 	}
 	else return 0;
@@ -127,7 +128,8 @@ char is_intFU(char* opcode) {
 		strcmp(opcode, "STORE") == 0 || // addr calculation
 		strcmp(opcode, "BZ") 	== 0 || // addr calculation and branch decision
 		strcmp(opcode, "BNZ") 	== 0 || // addr calculation and branch decision
-		strcmp(opcode, "JUMP") 	== 0 ){ // addr calculation ; branch always taken
+		strcmp(opcode, "JUMP") 	== 0 || // addr calculation ; branch always taken
+		strcmp(opcode, "JAL") 	== 0 ){ // addr calculation ; branch always taken
 
 		return 1;
 	}
@@ -150,7 +152,8 @@ char has_rd(char* opcode) {
 		strcmp(opcode, "MOVC") 	== 0 ||
 		strcmp(opcode, "LOAD") 	== 0 ||
 		strcmp(opcode, "ADDL") 	== 0 ||
-		strcmp(opcode, "SUBL") 	== 0 ){	
+		strcmp(opcode, "SUBL") 	== 0 ||	
+		strcmp(opcode, "JAL") 	== 0 ){	 // saves return address to a register value, which another JUMP insn would use to return
 		return 1;
 	}
 	else return 0;
@@ -442,13 +445,13 @@ int dispatch(cpu_t* cpu) {
 						iqe->u_rs1_ready = 1;
 					}
 					// insn with register and literal	
-					if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "ADDL") == 0 || strcmp(iqe->opcode, "SUBL") == 0) {
+					if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "ADDL") == 0 || strcmp(iqe->opcode, "SUBL") == 0 || strcmp(iqe->opcode, "JAL") == 0) {
 						iqe->u_rs2_ready = 1;
 					}
 					if(strcmp(iqe->opcode, "JUMP") == 0) {
 						iqe->u_rs2_ready = 1;
-					}	
-	
+					}		
+		
 					// check if any source registers are ready
 					if(cpu->unified_regs[iqe->u_rs1].valid) {
 						iqe->u_rs1_ready = 1;
@@ -552,6 +555,7 @@ int issue(cpu_t* cpu) {
 		rob_entry_t* robe = &cpu->rob.entries[iqe->rob_idx];
 		intFU->rob_idx = iqe->rob_idx;
 		strcpy(intFU->opcode, iqe->opcode);
+		intFU->pc = robe->pc;
 		intFU->u_rd = robe->u_rd; // target register
 		intFU->cfid = robe->cfid; // control-flow id
 
@@ -560,7 +564,6 @@ int issue(cpu_t* cpu) {
 		intFU->u_rs2_val = iqe->u_rs2_val;
 		
 		if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) { // for these insn, zero-flag value must also be ready
-			intFU->pc = robe->pc;
 			intFU->zero_flag = cpu->unified_regs[iqe->zero_flag_u_rd].zero_flag;
 		}
 	
@@ -664,7 +667,7 @@ int execute(cpu_t* cpu) {
 			else if(is_controlflow(intFU->opcode)) {
 				
 				char take_branch = 0;	
-				if(strcmp(intFU->opcode, "JUMP") == 0) {
+				if(strcmp(intFU->opcode, "JUMP") == 0 || strcmp(intFU->opcode, "JAL") == 0) {
 					take_branch = 1;
 					cpu->pc = intFU->u_rs1_val + intFU->imm;
 				}
@@ -682,6 +685,10 @@ int execute(cpu_t* cpu) {
 					// restores saved state
 					memcpy(cpu->unified_regs, cpu->saved_state[cpu->cfid].unified_regs, NUM_UNIFIED_REGS * sizeof(ureg_t));
 					memcpy(cpu->front_rename_table, cpu->saved_state[cpu->cfid].front_rename_table, (NUM_ARCH_REGS+1) * sizeof(int)); // +1 for zero-flag
+			
+					if(strcmp(intFU->opcode, "JAL") == 0) {
+						u_rd->val = intFU->pc + 4; // return address
+					}
 
 					// search where this cfid starts in the cfq
 					int temp_head_ptr = 0;
@@ -775,7 +782,7 @@ int execute(cpu_t* cpu) {
 			} // controlflow insns ; end 
 
 			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC")) u_rd->zero_flag = 1;
-			if(intFU->cfid != cpu->cfid) { // valid path, update saved state
+			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && intFU->cfid != cpu->cfid) { // valid path, update saved state
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].valid = 1;
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].val = u_rd->val;
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].zero_flag = u_rd->zero_flag;

@@ -24,11 +24,11 @@ void print_insn(stage_t* stage) {
 	}
 
 	// insn with register and literal	
-	if(strcmp(stage->opcode, "LOAD") == 0 || strcmp(stage->opcode, "ADDL") == 0 ||strcmp(stage->opcode, "SUBL") == 0) {
+	if(strcmp(stage->opcode, "LOAD") == 0 || strcmp(stage->opcode, "ADDL") == 0 ||strcmp(stage->opcode, "SUBL") == 0 || strcmp(stage->opcode, "JAL") == 0) {
 		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rd, stage->rs1, stage->imm);
 		if(rename) printf("(%s,U%d,U%d,#%d) ", stage->opcode, stage->u_rd, stage->u_rs1, stage->imm);
 	}
-	if(strcmp(stage->opcode, "STORE") == 0 || strcmp(stage->opcode, "JAL") == 0) {
+	if(strcmp(stage->opcode, "STORE") == 0) {
 		printf("%s,R%d,R%d,#%d ", stage->opcode, stage->rs2, stage->rs1, stage->imm);
 		if(rename) printf("(%s,U%d,U%d,#%d) ", stage->opcode, stage->u_rs2, stage->u_rs1, stage->imm);
 	}	

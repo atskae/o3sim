@@ -40,12 +40,12 @@ static void creat_insn(insn_t* ins, char* buffer) {
 	}
 
 	// insn with register and literal	
-	if(strcmp(ins->opcode, "LOAD") == 0 || strcmp(ins->opcode, "ADDL") == 0 ||strcmp(ins->opcode, "SUBL") == 0) {
+	if(strcmp(ins->opcode, "LOAD") == 0 || strcmp(ins->opcode, "ADDL") == 0 ||strcmp(ins->opcode, "SUBL") == 0 || strcmp(ins->opcode, "JAL") == 0) {
 		ins->rd = str_to_int(tokens[1]);
 		ins->rs1 = str_to_int(tokens[2]);
 		ins->imm = str_to_int(tokens[3]);
 	}
-	if(strcmp(ins->opcode, "STORE") == 0 || strcmp(ins->opcode, "JAL") == 0) {
+	if(strcmp(ins->opcode, "STORE") == 0) {
 		ins->rs2 = str_to_int(tokens[1]);
 	 	ins->rs1 = str_to_int(tokens[2]);
 		ins->imm = str_to_int(tokens[3]);
