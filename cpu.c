@@ -24,8 +24,8 @@ cpu_t* cpu_init(const char* filename) {
 		cpu->unified_regs[i].valid = 1;
 	}		
 	
-	memset(cpu->front_rename_table, -1, NUM_ARCH_REGS * sizeof(int));	
-	memset(cpu->back_rename_table, -1, NUM_ARCH_REGS * sizeof(int));	
+	memset(cpu->front_rename_table, -1, (NUM_ARCH_REGS+1) * sizeof(int)); // +1 for zero-flag
+	memset(cpu->back_rename_table, -1, (NUM_ARCH_REGS+1) * sizeof(int));	
 
 	memset(&cpu->rob, 0, sizeof(rob_t));	
 	memset(cpu->iq, 0, sizeof(iq_entry_t));	
@@ -125,7 +125,9 @@ char is_intFU(char* opcode) {
 		strcmp(opcode, "SUBL") 	== 0 ||
 		strcmp(opcode, "LOAD") 	== 0 || // addr calculation
 		strcmp(opcode, "STORE") == 0 || // addr calculation
-		strcmp(opcode, "JUMP") 	== 0 ){ // addr calculation
+		strcmp(opcode, "BZ") 	== 0 || // addr calculation and branch decision
+		strcmp(opcode, "BNZ") 	== 0 || // addr calculation and branch decision
+		strcmp(opcode, "JUMP") 	== 0 ){ // addr calculation ; branch always taken
 
 		return 1;
 	}
@@ -193,7 +195,7 @@ int fetch(cpu_t* cpu) {
 			stage->pc = -1;
 			cpu->stage[DRF] = cpu->stage[F];	
 			cpu->stage[F].stalled = 1;
-			update_print_stack("Fetch", cpu, cpu->code_size + F);
+			update_print_stack("Fetch", cpu, cpu->code_size);
 			return 0;	
 		}
 		if(is_nop(stage->opcode)) return 0;
@@ -222,7 +224,7 @@ int fetch(cpu_t* cpu) {
 	}
 	if(stage->busy > 0) stage->busy--;
 
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Fetch", cpu, cpu->code_size); // NOP
+	if(!is_valid_insn(stage->opcode) || is_nop(stage->opcode)) update_print_stack("Fetch", cpu, cpu->code_size); // NOP
 	else update_print_stack("Fetch", cpu, get_code_index(stage->pc));
 
 	return 0;
@@ -237,7 +239,7 @@ int decode(cpu_t* cpu) {
 			stage->pc = -1;
 			cpu->stage[DP] = cpu->stage[DRF]; 	
 			cpu->stage[DRF].stalled = 1;
-			update_print_stack("Decode", cpu, cpu->code_size + DRF);
+			update_print_stack("Decode", cpu, cpu->code_size);
 			return 0;	
 		}
 
@@ -276,13 +278,11 @@ int decode(cpu_t* cpu) {
 			if(stage->u_rd == -1) { // no more free unified registers ; stall
 				printf("No more unified registers. Insert logic here...\n");	
 			}
-
-			// rename arch_reg -> unified_reg
-			stage->u_rd = stage->u_rd;
-			
+	
 			// update frontend rename table
 			cpu->front_rename_table[stage->rd] = stage->u_rd;
-			
+			if(!is_mem(stage->opcode) && strcmp(stage->opcode, "MOVC")) cpu->front_rename_table[ZERO_FLAG] = stage->u_rd; // this insn becomes the most recent zero-flag value holder
+	
 			cpu->unified_regs[stage->u_rd].valid = 0;	
 		}
 		
@@ -297,7 +297,7 @@ int decode(cpu_t* cpu) {
 	}
 	if(stage->busy > 0) stage->busy--;
 
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Decode", cpu, cpu->code_size); // NOP
+	if(!is_valid_insn(stage->opcode) || is_nop(stage->opcode)) update_print_stack("Decode", cpu, cpu->code_size); // NOP
 	else update_print_stack("Decode", cpu, get_code_index(stage->pc));
 	
 	return 0;
@@ -389,7 +389,7 @@ int dispatch(cpu_t* cpu) {
 
 				// save the state of URF and rename table ; in case branch-taken, must restore URF and rename table
 				memcpy(cpu->saved_state[cpu->cfid].unified_regs, cpu->unified_regs, NUM_UNIFIED_REGS * sizeof(ureg_t));
-				memcpy(cpu->saved_state[cpu->cfid].front_rename_table, cpu->front_rename_table, NUM_ARCH_REGS * sizeof(int));
+				memcpy(cpu->saved_state[cpu->cfid].front_rename_table, cpu->front_rename_table, (NUM_ARCH_REGS+1) * sizeof(int)); // +1 for zero-flag
 
 				// re-assign new cfid to this branch insn
 				robe->cfid = cpu->cfid;	
@@ -422,6 +422,11 @@ int dispatch(cpu_t* cpu) {
 	
 					iqe->u_rs2 = stage->u_rs2;
 					iqe->u_rs2_ready = 0;
+
+					if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
+						iqe->zero_flag_u_rd = cpu->front_rename_table[ZERO_FLAG]; // get the u_rd that will produce the closest instance of the zero-flag
+						iqe->zero_flag_ready = 0;	
+					}
 	
 					// control-flow id
 					iqe->cfid = cpu->cfid;	
@@ -458,6 +463,11 @@ int dispatch(cpu_t* cpu) {
 						}
 						iqe->u_rs2_val = cpu->unified_regs[iqe->u_rs2].val;
 					}
+					// zero-flag
+					if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
+						if(cpu->unified_regs[iqe->zero_flag_u_rd].valid) iqe->zero_flag_ready=  1;	
+					}
+
 				
 					break;
 				}
@@ -476,7 +486,7 @@ int dispatch(cpu_t* cpu) {
 	}
 	if(stage->busy > 0) stage->busy--;
 
-	if(!is_valid_insn(stage->opcode)) update_print_stack("Dispatch", cpu, cpu->code_size);
+	if(!is_valid_insn(stage->opcode) || is_nop(stage->opcode)) update_print_stack("Dispatch", cpu, cpu->code_size);
 	else update_print_stack("Dispatch", cpu, get_code_index(stage->pc));
 	
 	return 0;
@@ -509,7 +519,12 @@ int issue(cpu_t* cpu) {
 		// search for the earliest ready instruction for each FU
 	
 		if(cpu->intFU.busy <= 0 && is_intFU(iqe->opcode)) { // if this FU is free and this insn goes to intFU
-			if(iqe->u_rs1_ready && iqe->u_rs2_ready) {	
+			char ready = iqe->u_rs1_ready && iqe->u_rs2_ready;
+			if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) { // for these insn, zero-flag value must also be ready
+				ready = ready & iqe->zero_flag_ready;
+			}
+
+			if(ready) {	
 				if(iqe->cycle_dispatched < earliest_cycle_intFU) {
 					earliest_intFU = i;
 					earliest_cycle_intFU = iqe->cycle_dispatched; 
@@ -543,7 +558,12 @@ int issue(cpu_t* cpu) {
 		intFU->imm = iqe->imm;
 		intFU->u_rs1_val = iqe->u_rs1_val;
 		intFU->u_rs2_val = iqe->u_rs2_val;
-			
+		
+		if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) { // for these insn, zero-flag value must also be ready
+			intFU->pc = robe->pc;
+			intFU->zero_flag = cpu->unified_regs[iqe->zero_flag_u_rd].zero_flag;
+		}
+	
 		intFU->busy = INT_FU_LAT; // latency + issue latency
 
 		// printing stuff
@@ -594,6 +614,10 @@ void broadcast(cpu_t* cpu, int u_rd, int u_rd_val) {
 				iqe->u_rs2_ready = 1;
 				iqe->u_rs2_val = u_rd_val;	
 			}
+			// broadcast the zero-flag value
+			if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
+				if(iqe->zero_flag_u_rd == u_rd) iqe->zero_flag_ready = 1;	
+			}
 		} // if iqe->taken ; end
 	}
 
@@ -637,110 +661,136 @@ int execute(cpu_t* cpu) {
 			else if(strcmp(intFU->opcode, "ADDL") == 0) u_rd->val = intFU->u_rs1_val + intFU->imm;
 			else if(strcmp(intFU->opcode, "SUBL") == 0) u_rd->val = intFU->u_rs1_val - intFU->imm;		
 				
-			else if(strcmp(intFU->opcode, "JUMP") == 0) {
-				cpu->pc = intFU->u_rs1_val + intFU->imm;
-
-				// jump is always taken ; restore URF and rename table	
-				memcpy(cpu->unified_regs, cpu->saved_state[cpu->cfid].unified_regs, NUM_UNIFIED_REGS * sizeof(ureg_t));
-				memcpy(cpu->front_rename_table, cpu->saved_state[cpu->cfid].front_rename_table, NUM_ARCH_REGS * sizeof(int));
-
-				// search where this cfid starts in the cfq
-				int temp_head_ptr = 0;
-				for(int i=cpu->cfq_head_ptr; i<CFQ_SIZE; i++) {
-					if(cpu->cfq[i] == intFU->cfid) {
-						temp_head_ptr = i;
-						break;
-					}
+			else if(is_controlflow(intFU->opcode)) {
+				
+				char take_branch = 0;	
+				if(strcmp(intFU->opcode, "JUMP") == 0) {
+					take_branch = 1;
+					cpu->pc = intFU->u_rs1_val + intFU->imm;
 				}
+				if(strcmp(intFU->opcode, "BZ") == 0 && intFU->zero_flag) {
+					take_branch = 1;
+					cpu->pc = intFU->pc + intFU->imm;
+				}			
+				if(strcmp(intFU->opcode, "BNZ") == 0 && !intFU->zero_flag) {
+					take_branch = 1;
+					cpu->pc = intFU->pc + intFU->imm;
+				}	
+				
+				if(take_branch) {
+				
+					// restores saved state
+					memcpy(cpu->unified_regs, cpu->saved_state[cpu->cfid].unified_regs, NUM_UNIFIED_REGS * sizeof(ureg_t));
+					memcpy(cpu->front_rename_table, cpu->saved_state[cpu->cfid].front_rename_table, (NUM_ARCH_REGS+1) * sizeof(int)); // +1 for zero-flag
 
-				// flush all instructions with cfids from temp_head_ptr to cfq_tail_ptr
-				int new_tail_ptr = temp_head_ptr; // save the value
-				while(temp_head_ptr != cpu->cfq_tail_ptr) {	
-					// convert all insn with matching cfid to NOPs
-					int cfid = cpu->cfq[temp_head_ptr];
-					// search iq
-					iq_entry_t* iq = cpu->iq;
-					for(int i=0; i<IQ_SIZE; i++) {
-						iq_entry_t* iqe = &iq[i];
-						if(!iqe->taken) continue;
-			
-						if(iqe->cfid == cfid) {
-							iqe->taken = 0;	// deallocate entry
-						}	
-					}
-					// search rob
-					rob_entry_t* rob = cpu->rob.entries;
-					for(int i=0; i<ROB_SIZE; i++) {
-						if(intFU->rob_idx == i) continue; // do not flush this insn
-						rob_entry_t* robe = &rob[i];
-						if(robe->taken && robe->cfid == cfid) {
-							strcpy(robe->opcode, "NOP");
-							robe->valid = 1; // no need to wait for sources
-			
-							// update print info
-							strcpy(cpu->print_info[get_code_index(robe->pc)].opcode, "NOP");
-
+					// search where this cfid starts in the cfq
+					int temp_head_ptr = 0;
+					for(int i=cpu->cfq_head_ptr; i<CFQ_SIZE; i++) {
+						if(cpu->cfq[i] == intFU->cfid) {
+							temp_head_ptr = i;
+							break;
 						}
 					}
 
-					// search lsq
-					lsq_entry_t* lsq = cpu->lsq.entries;
-					for(int i=0; i<LSQ_SIZE; i++) {
-						lsq_entry_t* lsqe = &lsq[i];
-						if(lsqe->taken && lsqe->cfid == cfid) {
-							strcpy(lsqe->opcode, "NOP");
-							lsqe->done= 1; // no need to wait for sources
+					// flush all instructions with cfids from temp_head_ptr to cfq_tail_ptr
+					int new_tail_ptr = temp_head_ptr; // save the value
+					while(temp_head_ptr != cpu->cfq_tail_ptr) {	
+						// convert all insn with matching cfid to NOPs
+						int cfid = cpu->cfq[temp_head_ptr];
+						// search iq
+						iq_entry_t* iq = cpu->iq;
+						for(int i=0; i<IQ_SIZE; i++) {
+							iq_entry_t* iqe = &iq[i];
+							if(!iqe->taken) continue;
 			
-							// update print info
-							strcpy(cpu->print_info[get_code_index(lsqe->pc)].opcode, "NOP");
+							if(iqe->cfid == cfid) {
+								iqe->taken = 0;	// deallocate entry
+							}	
 						}
-					}
-
-					// check FUs
-					if(cpu->mulFU.cfid == cfid) {
-						cpu->mulFU.busy = -1; // free resource
-						strcpy(cpu->mulFU.opcode, "NOP");	
-					}
-					if(cpu->memFU.cfid == cfid) {
-						cpu->memFU.busy = -1; // free resource
-						strcpy(cpu->memFU.opcode, "NOP");	
-					}
+						// search rob
+						rob_entry_t* rob = cpu->rob.entries;
+						for(int i=0; i<ROB_SIZE; i++) {
+							if(intFU->rob_idx == i) continue; // do not flush this insn
+							rob_entry_t* robe = &rob[i];
+							if(robe->taken && robe->cfid == cfid) {
+								strcpy(robe->opcode, "NOP");
+								robe->valid = 1; // no need to wait for sources
 			
-					// flush the decode and dispatch stage, if cfid match
-					if(cpu->stage[DRF].cfid == cfid) {
-						strcpy(cpu->stage[DRF].opcode, "NOP");
-					}
-					if(cpu->stage[DP].cfid == cfid) {
-						strcpy(cpu->stage[DP].opcode, "NOP");
-					}
+								// update print info
+								strcpy(cpu->print_info[get_code_index(robe->pc)].opcode, "NOP");
+
+							}
+						}
+
+						// search lsq
+						lsq_entry_t* lsq = cpu->lsq.entries;
+						for(int i=0; i<LSQ_SIZE; i++) {
+							lsq_entry_t* lsqe = &lsq[i];
+							if(lsqe->taken && lsqe->cfid == cfid) {
+								strcpy(lsqe->opcode, "NOP");
+								lsqe->done= 1; // no need to wait for sources
+			
+								// update print info
+								strcpy(cpu->print_info[get_code_index(lsqe->pc)].opcode, "NOP");
+							}
+						}
+
+						// check FUs
+						if(cpu->mulFU.cfid == cfid) {
+							cpu->mulFU.busy = -1; // free resource
+							strcpy(cpu->mulFU.opcode, "NOP");	
+						}
+						if(cpu->memFU.cfid == cfid) {
+							cpu->memFU.busy = -1; // free resource
+							strcpy(cpu->memFU.opcode, "NOP");	
+						}
+			
+						// flush the decode and dispatch stage, if cfid match
+						if(cpu->stage[DRF].cfid == cfid) {
+							strcpy(cpu->stage[DRF].opcode, "NOP");
+						}
+						if(cpu->stage[DP].cfid == cfid) {
+							strcpy(cpu->stage[DP].opcode, "NOP");
+						}
+						
+						// un-stall stages if it fetched insn past code 
+						cpu->stage[F].stalled = 0;
+						cpu->stage[DRF].stalled = 0;
+						cpu->stage[DP].stalled = 0;	
 					
-					// stall fetch, decode, dispatch for 1 cycle
-					//cpu->stage[F].busy = 1;
-					//cpu->stage[DRF].busy = 1;
-					//cpu->stage[DP].busy = 1;	
-				
+						// free this cfid
+						cpu->cfid_freelist[cfid] = 0;	
+						temp_head_ptr = (temp_head_ptr + 1) % CFQ_SIZE;
+					
+					} // convert matching cfid to NOPs ; end
+
+					cpu->cfq_tail_ptr = new_tail_ptr;
+				} // if taken_branch ;  end
+				else { // not taken branch
 					// free this cfid
-					cpu->cfid_freelist[cfid] = 0;	
-					temp_head_ptr = (temp_head_ptr + 1) % CFQ_SIZE;
-				
+					cpu->cfid_freelist[intFU->cfid] = 0;		
 				}
-				cpu->cfq_tail_ptr = new_tail_ptr;
 	
-				update_print_stack("Execute", cpu, intFU->print_idx);		
-				robe->valid = 1;	
-				return 0;
-			} 
+				//robe->valid = 1;	
+			} // controlflow insns ; end 
 
-			if(u_rd->val == 0) u_rd->zero_flag = 1;
+			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC")) u_rd->zero_flag = 1;
+			if(intFU->cfid != cpu->cfid) { // valid path, update saved state
+				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].valid = 1;
+				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].val = u_rd->val;
+				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].zero_flag = u_rd->zero_flag;
+			}
+	
 			u_rd->valid = 1;
-
 			// broadcast ready value to IQ and LSQ
 			broadcast(cpu, robe->u_rd, u_rd->val);
 			robe->valid = 1;	
 		}
 				
 		update_print_stack("Execute", cpu, intFU->print_idx);		
-	} 
+	}
+	if(intFU->busy < 0) intFU->print_idx = cpu->code_size; // set to NOP if empty
+ 
 	// mulFU
 	fu_t* mulFU = &cpu->mulFU;
 	mulFU->busy--;
@@ -750,13 +800,20 @@ int execute(cpu_t* cpu) {
 		ureg_t* u_rd = &cpu->unified_regs[robe->u_rd];
 		u_rd->val = mulFU->u_rs1_val * mulFU->u_rs2_val; // the value is written directly to URF
 		u_rd->valid = 1;
-		
+		if(u_rd->val == 0) u_rd->zero_flag = 1;
+		if(mulFU->cfid != cpu->cfid) { // valid path, update saved state
+			cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].valid = 1;
+			cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].val = u_rd->val;
+			cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].zero_flag = u_rd->zero_flag;
+		}
+
 		// broadcast ready value to IQ
 		broadcast(cpu, robe->u_rd, u_rd->val);
 		robe->valid = 1;
 
 		update_print_stack("Execute", cpu, mulFU->print_idx);		
-	}	
+	}
+	if(mulFU->busy < 0) mulFU->print_idx = cpu->code_size; // set to NOP if empty
 
 	return 0;
 }
@@ -767,6 +824,8 @@ int memory(cpu_t* cpu) {
 	memFU->busy--;
 	if(memFU->busy < 0) { // unit is free ; put a memory instruction here
 		
+		memFU->print_idx = cpu->code_size; // NOP	
+	
 		// check head of LSQ for ready instruction 
 		int head_ptr = cpu->lsq.head_ptr;
 		lsq_entry_t* lsqe = &cpu->lsq.entries[head_ptr];
@@ -812,6 +871,7 @@ int memory(cpu_t* cpu) {
 
 		if(strcmp(memFU->opcode, "LOAD") == 0) {
 			u_rd->val = cpu->memory[memFU->mem_addr];
+			cpu->unified_regs[robe->u_rd].valid = 1;
 			// broadcast ready value to IQ
 			broadcast(cpu, robe->u_rd, u_rd->val);
 		}
@@ -835,7 +895,8 @@ int commit(cpu_t* cpu) {
 		// get ROB entry at the head of ROB
 		rob_entry_t* robe = &cpu->rob.entries[ptr];
 		if(robe->valid) { // insn has wrote to URF 
-			if(!is_nop(robe->opcode)) {
+			
+			if(has_rd(robe->opcode)) {
 				// set arch reg mapping to URF
 				cpu->arch_regs[robe->rd].u_rd = robe->u_rd;
 				
@@ -843,18 +904,19 @@ int commit(cpu_t* cpu) {
 				int old_u_rd = cpu->back_rename_table[robe->rd];
 				if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
 				cpu->back_rename_table[robe->rd] = robe->u_rd;
-
-				robe->taken = 0;
-				//robe->valid = 0;
-				//robe->pc = 0;
-				//u_rd->val = 0;
-
-				if(is_mem(robe->opcode)) {
-					cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
-					cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
+				if(!is_mem(robe->opcode) && strcmp(robe->opcode, "MOVC")) {
+					int old_u_rd = cpu->back_rename_table[ZERO_FLAG];
+					if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
+					cpu->back_rename_table[ZERO_FLAG] = robe->u_rd; 
 				}
-			} // not nop ; end
+			} 
+			if(is_mem(robe->opcode)) {
+				cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
+				cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
+			}	
+			if(is_halt(robe->opcode)) cpu->done = 1;
 			
+			robe->taken = 0;
 			cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE; // update rob head_ptr		
 		
 			update_print_stack("Commit", cpu, get_code_index(robe->pc));
@@ -865,6 +927,8 @@ int commit(cpu_t* cpu) {
 }
 
 char no_more_insn(cpu_t* cpu) {
+
+	if(cpu->done) return cpu->done; // if halt occurred, this is already set
 
 	char rob_empty = 0;
 	if(cpu->rob.head_ptr == cpu->rob.tail_ptr && !cpu->rob.entries[cpu->rob.head_ptr].taken) rob_empty = 1;

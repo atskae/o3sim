@@ -24,6 +24,8 @@
 #define MUL_FU_LAT 2
 #define MEM_FU_LAT 3
 
+#define ZERO_FLAG NUM_ARCH_REGS // index into rename table that points to the u_rd of the most recent zero-flag value
+
 /*
 
 	Data Structures
@@ -87,6 +89,10 @@ typedef struct fu_t {
 
 	// only used by memFU
 	int mem_addr;
+
+	// BZ and BNZ
+	int pc;
+	char zero_flag;
 
 	// control insn id
 	int cfid;
@@ -153,6 +159,10 @@ typedef struct iq_entry_t {
 	char u_rs2_ready;
 	int u_rs2_val;
 
+	// only for BZ and BNZ
+	int zero_flag_u_rd; // the unified register that will hold the zero-flag value
+	char zero_flag_ready; 
+
 	int rob_idx; // where to send computed value
 	int lsq_idx; // where to send computed memory address ; only needed for memory operations
 	int cfid; // control flow id
@@ -211,8 +221,8 @@ typedef struct cpu_t {
 	ureg_t unified_regs[NUM_UNIFIED_REGS];
 	stage_t stage[NUM_STAGES];
 
-	int front_rename_table[NUM_ARCH_REGS]; // arch reg -> unified reg mapping
-	int back_rename_table[NUM_ARCH_REGS]; // arch reg -> commited values in unified reg file
+	int front_rename_table[NUM_ARCH_REGS + 1]; // arch reg -> unified reg mapping ; +1 for zero-flag
+	int back_rename_table[NUM_ARCH_REGS + 1]; // arch reg -> commited values in unified reg file ; +1 for zero flag
 
 	rob_t rob;
 	iq_entry_t iq[IQ_SIZE];

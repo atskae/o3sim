@@ -75,15 +75,17 @@ void print_rename_table(cpu_t* cpu) {
 	for(int i=0; i<NUM_ARCH_REGS; i++) {
 		printf("R%-2i: U%-9i R%-2i: U%-9i\n", i, cpu->front_rename_table[i], i, cpu->back_rename_table[i]);
 	}
+	// zero flag
+	printf("z-f: U%-9i z-f: U%-9i\n", cpu->front_rename_table[ZERO_FLAG], cpu->back_rename_table[ZERO_FLAG]);
 }
 
 void print_iq(iq_entry_t* iq) {
 	printf("---Instruction Queue---\n");
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "dispatch", "cfid", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "dispatch", "cfid", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm", "z_ud", "z_rdy");
 	for(int i=0; i<IQ_SIZE; i++) {
 		iq_entry_t* iqe = &iq[i];
-		printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->cfid, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm);	
+		printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->cfid, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm, iqe->zero_flag_u_rd, iqe->zero_flag_ready);	
 	}
 }
 
