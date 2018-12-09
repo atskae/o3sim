@@ -89,6 +89,7 @@ typedef struct fu_t {
 
 	// only used by memFU
 	int mem_addr;
+	int rd; // so LOADs can free physical registers
 
 	// BZ and BNZ
 	int pc;

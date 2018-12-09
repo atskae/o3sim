@@ -661,6 +661,7 @@ int execute(cpu_t* cpu) {
 			else if(strcmp(intFU->opcode, "ADD") == 0) u_rd->val = intFU->u_rs1_val + intFU->u_rs2_val;
 			else if(strcmp(intFU->opcode, "SUB") == 0) u_rd->val = intFU->u_rs1_val - intFU->u_rs2_val;
 			else if(strcmp(intFU->opcode, "AND") == 0) u_rd->val = intFU->u_rs1_val & intFU->u_rs2_val;
+			else if(strcmp(intFU->opcode, "OR") == 0) u_rd->val = intFU->u_rs1_val | intFU->u_rs2_val;	
 			else if(strcmp(intFU->opcode, "XOR") == 0) u_rd->val = intFU->u_rs1_val ^ intFU->u_rs2_val;	
 			else if(strcmp(intFU->opcode, "ADDL") == 0) u_rd->val = intFU->u_rs1_val + intFU->imm;
 			else if(strcmp(intFU->opcode, "SUBL") == 0) u_rd->val = intFU->u_rs1_val - intFU->imm;		
@@ -787,7 +788,9 @@ int execute(cpu_t* cpu) {
 				//robe->valid = 1;	
 			} // controlflow insns ; end 
 
-			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC") && strcmp(intFU->opcode, "JAL")) u_rd->zero_flag = 1;
+			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC") && strcmp(intFU->opcode, "JAL")) {
+				u_rd->zero_flag = (u_rd->val == 0);
+			}
 			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && intFU->cfid != cpu->cfid) { // valid path, update saved state
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].valid = 1;
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].val = u_rd->val;
@@ -866,6 +869,7 @@ int memory(cpu_t* cpu) {
 				memFU->busy = MEM_FU_LAT - 1; // this cycle also counts toward the latency count, hence -1
 				memFU->cfid = lsqe->cfid;
 				memFU->u_rd = robe->u_rd;
+				memFU->rd = robe->rd; // used by loads to free physical register when complete
 				// print info
 				memFU->print_idx = get_code_index(lsqe->pc);
 			
@@ -895,8 +899,18 @@ int memory(cpu_t* cpu) {
 
 		if(strcmp(memFU->opcode, "LOAD") == 0) {
 			u_rd->val = cpu->memory[memFU->mem_addr];
-			//cpu->unified_regs[robe->u_rd].valid = 1;
 			u_rd->valid = 1;
+
+			// commit process, since ROB entry was removed earlier
+			
+			// update architectural register file
+			cpu->arch_regs[memFU->rd].u_rd = memFU->u_rd;
+
+			// update backend rename table ; memory insn ROB entries were removed earlier, so rename table update must be done here
+			int old_u_rd = cpu->back_rename_table[memFU->rd];
+			if(old_u_rd != -1 && old_u_rd != memFU->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
+			cpu->back_rename_table[memFU->rd] = memFU->u_rd;
+
 			// broadcast ready value to IQ
 			broadcast(cpu, memFU->u_rd, u_rd->val);
 		}
@@ -937,10 +951,10 @@ int commit(cpu_t* cpu) {
 					cpu->back_rename_table[ZERO_FLAG] = robe->u_rd; 
 				}
 			} 
-			if(is_mem(robe->opcode)) {
-				cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
-				cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
-			}	
+			//if(is_mem(robe->opcode)) {
+			//	cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
+			//	cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
+			//}	
 			if(is_halt(robe->opcode)) {
 				// mem insn leave ROB but can be in the middle of a mem access ; wait until done	
 				if(cpu->memFU.busy <= 0) cpu->done = 1;
