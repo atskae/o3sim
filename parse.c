@@ -35,8 +35,7 @@ static void creat_insn(insn_t* ins, char* buffer) {
 		ins->imm = str_to_int(tokens[2]);
 	}	
 	if(strcmp(ins->opcode, "BZ") == 0 || strcmp(ins->opcode, "BNZ") == 0) {
-		ins->rs1 = str_to_int(tokens[1]);
-		ins->imm = str_to_int(tokens[2]);
+		ins->imm = str_to_int(tokens[1]);
 	}
 
 	// insn with register and literal	

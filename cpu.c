@@ -18,7 +18,7 @@ cpu_t* cpu_init(const char* filename) {
 
 	cpu->clock = 0;	
 	cpu->pc = CODE_START_ADDR;
-	memset(cpu->arch_regs, 0, sizeof(areg_t) * NUM_ARCH_REGS);
+	memset(cpu->arch_regs, -1, sizeof(areg_t) * NUM_ARCH_REGS);
 	memset(cpu->unified_regs, 0, sizeof(ureg_t) * NUM_UNIFIED_REGS);
 	for(int i=0; i<NUM_UNIFIED_REGS; i++) {
 		cpu->unified_regs[i].valid = 1;
@@ -443,6 +443,7 @@ int dispatch(cpu_t* cpu) {
 					}
 					if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) {
 						iqe->u_rs1_ready = 1;
+						iqe->u_rs2_ready = 1;
 					}
 					// insn with register and literal	
 					if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "ADDL") == 0 || strcmp(iqe->opcode, "SUBL") == 0 || strcmp(iqe->opcode, "JAL") == 0) {
@@ -753,6 +754,11 @@ int execute(cpu_t* cpu) {
 						}
 			
 						// flush the decode and dispatch stage, if cfid match
+						if(cpu->stage[F].cfid == cfid) {
+							strcpy(cpu->stage[F].opcode, "NOP");
+							cpu->stage[F].busy = 1; // let NOP sit for 1 cycle
+						}
+
 						if(cpu->stage[DRF].cfid == cfid) {
 							strcpy(cpu->stage[DRF].opcode, "NOP");
 						}
@@ -781,7 +787,7 @@ int execute(cpu_t* cpu) {
 				//robe->valid = 1;	
 			} // controlflow insns ; end 
 
-			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC")) u_rd->zero_flag = 1;
+			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC") && strcmp(intFU->opcode, "JAL")) u_rd->zero_flag = 1;
 			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && intFU->cfid != cpu->cfid) { // valid path, update saved state
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].valid = 1;
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].val = u_rd->val;
@@ -836,7 +842,7 @@ int memory(cpu_t* cpu) {
 		// check head of LSQ for ready instruction 
 		int head_ptr = cpu->lsq.head_ptr;
 		lsq_entry_t* lsqe = &cpu->lsq.entries[head_ptr];
-		if(lsqe->done) return 0; // this memory instruction completed ; just needs to be commited
+		//if(lsqe->done) return 0; // this memory instruction completed ; just needs to be commited
 
 		head_ptr = cpu->rob.head_ptr;
 		rob_entry_t* robe = &cpu->rob.entries[head_ptr];
@@ -856,40 +862,54 @@ int memory(cpu_t* cpu) {
 				strcpy(memFU->opcode, lsqe->opcode);
 				memFU->mem_addr = lsqe->mem_addr;
 				memFU->u_rs2_val = lsqe->u_rs2_val;	// only used by stores
-				memFU->rob_idx = lsqe->rob_idx;
+				//memFU->rob_idx = lsqe->rob_idx;
 				memFU->busy = MEM_FU_LAT - 1; // this cycle also counts toward the latency count, hence -1
 				memFU->cfid = lsqe->cfid;
+				memFU->u_rd = robe->u_rd;
 				// print info
 				memFU->print_idx = get_code_index(lsqe->pc);
+			
+				// remove entry from LSQ and ROB
+				int head_ptr = cpu->lsq.head_ptr;
+				cpu->lsq.entries[head_ptr].taken = 0;
+				cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE;
 				
-				update_print_stack("Memory", cpu, memFU->print_idx);
+				head_ptr = cpu->rob.head_ptr;
+				cpu->rob.entries[head_ptr].taken = 0;
+				cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE;
+	
+				update_print_stack("Commit", cpu, memFU->print_idx);
+//				update_print_stack("Memory", cpu, memFU->print_idx);
 			}
 		}
 	
-	} else if(!memFU->busy) { // mem operations complete in this cycle
+	} else if(!memFU->busy) { // mem operation complete in this cycle
 
-		int head_ptr = cpu->lsq.head_ptr;
-		lsq_entry_t* lsqe = &cpu->lsq.entries[head_ptr];
+		//int head_ptr = cpu->lsq.head_ptr;
+		//lsq_entry_t* lsqe = &cpu->lsq.entries[head_ptr];
 
-		head_ptr = cpu->rob.head_ptr;
-		rob_entry_t* robe = &cpu->rob.entries[head_ptr];
-		ureg_t* u_rd = &cpu->unified_regs[robe->u_rd];
-		assert(robe->pc == lsqe->pc);
+		//head_ptr = cpu->rob.head_ptr;
+		//rob_entry_t* robe = &cpu->rob.entries[memFU->u_rd];
+		ureg_t* u_rd = &cpu->unified_regs[memFU->u_rd];
+		// assert(robe->pc == lsqe->pc);
 
 		if(strcmp(memFU->opcode, "LOAD") == 0) {
 			u_rd->val = cpu->memory[memFU->mem_addr];
-			cpu->unified_regs[robe->u_rd].valid = 1;
+			//cpu->unified_regs[robe->u_rd].valid = 1;
+			u_rd->valid = 1;
 			// broadcast ready value to IQ
-			broadcast(cpu, robe->u_rd, u_rd->val);
+			broadcast(cpu, memFU->u_rd, u_rd->val);
 		}
 		else if(strcmp(memFU->opcode, "STORE") == 0) {
 			cpu->memory[memFU->mem_addr] = memFU->u_rs2_val;
 		}
-		robe->valid = 1;		
-		lsqe->done = 1;
+		//robe->valid = 1;		
+		//lsqe->done = 1;
 	
-		update_print_stack("Memory", cpu, memFU->print_idx);
+//		update_print_stack("Memory", cpu, memFU->print_idx);
 	}
+
+	update_print_stack("Memory", cpu, memFU->print_idx);
 
 	return 0;
 }
@@ -912,8 +932,8 @@ int commit(cpu_t* cpu) {
 				if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
 				cpu->back_rename_table[robe->rd] = robe->u_rd;
 				if(!is_mem(robe->opcode) && strcmp(robe->opcode, "MOVC")) {
-					int old_u_rd = cpu->back_rename_table[ZERO_FLAG];
-					if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
+					//int old_u_rd = cpu->back_rename_table[ZERO_FLAG];
+					//if(old_u_rd != -1 && old_u_rd != robe->u_rd) cpu->unified_regs[old_u_rd].taken = 0;
 					cpu->back_rename_table[ZERO_FLAG] = robe->u_rd; 
 				}
 			} 
@@ -921,8 +941,11 @@ int commit(cpu_t* cpu) {
 				cpu->lsq.entries[cpu->lsq.head_ptr].taken = 0;
 				cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE; // update lsq head_ptr	
 			}	
-			if(is_halt(robe->opcode)) cpu->done = 1;
-			
+			if(is_halt(robe->opcode)) {
+				// mem insn leave ROB but can be in the middle of a mem access ; wait until done	
+				if(cpu->memFU.busy <= 0) cpu->done = 1;
+			}
+
 			robe->taken = 0;
 			cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE; // update rob head_ptr		
 		
@@ -947,11 +970,11 @@ char no_more_insn(cpu_t* cpu) {
 		stage_t* stage = &cpu->print_info[p->idx];
 		if(strcmp(p->name, "Commit") == 0) continue;
 		if(is_valid_insn(stage->opcode) && strcmp(stage->opcode, "NOP")) {
+			if(strcmp(p->name, "Memory") == 0 && cpu->memFU.busy <= 0) continue;
 			done = 0;
 			break;
 		}
-	}
-
+	}	
 	return (rob_empty && done);
 }
 

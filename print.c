@@ -6,21 +6,18 @@
 #include "print.h"
 #include "cpu.h"
 
-void print_insn(stage_t* stage) {
-
-	char rename = !(strcmp(stage->name, "Fetch") == 0);
+void print_insn(stage_t* stage, char rename) {
 
 	// no operand insn
 	if(strcmp(stage->opcode, "NOP") == 0 || strcmp(stage->opcode, "HALT") == 0) printf("%s ", stage->opcode);
 
-	// insn with only literal
 	if(strcmp(stage->opcode, "MOVC") == 0) {
 		printf("%s,R%d,#%d ", stage->opcode, stage->rd, stage->imm);
 		if(rename) printf("(%s,U%d,#%d) ", stage->opcode, stage->u_rd, stage->imm);
 	}
 	if(strcmp(stage->opcode, "BZ") == 0 || strcmp(stage->opcode, "BNZ") == 0) {
-		printf("%s,R%d,#%d ", stage->opcode, stage->rs1, stage->imm);
-		if(rename) printf("(%s,U%d,#%d) ", stage->opcode, stage->u_rs1, stage->imm);
+		printf("%s,#%d ", stage->opcode, stage->imm);
+		if(rename) printf("(%s,#%d) ", stage->opcode, stage->imm);
 	}
 
 	// insn with register and literal	
@@ -53,7 +50,8 @@ void print_insn(stage_t* stage) {
 
 void print_stage_content(char* name, stage_t* stage) {	
 	printf("%-15s: pc(%d) ", name, stage->pc);
-	print_insn(stage);	
+	char rename = !strcmp(name, "Fetch") == 0;
+	print_insn(stage, rename);	
 	if(strcmp(name, "intFU") == 0 || strcmp(name, "mulFU") == 0 || strcmp(name, "memFU") == 0 ) {
 		if(stage->cfid != -1) printf("cfid %i ", stage->cfid);
 		if(stage->busy > 1) {
@@ -127,17 +125,21 @@ void print_rob(rob_t* rob) {
 
 void print_unified_regs(ureg_t* regs) {
 	printf("---Unified Registers---\n");
-	printf("%-9s %-9s %-9s %-9s %-9s\n", "reg", "taken", "valid", "zero", "value");
+	printf("%-9s %-9s %-9s %-9s %-9s\n", "reg", "taken", "valid", "value", "zero");
 	for(int i=0; i<NUM_UNIFIED_REGS; i++) {
-		printf("U%-9i %-9i %-9i %-9i %-9i\n", i, regs[i].taken, regs[i].valid, regs[i].zero_flag, regs[i].val);
+		printf("U%-9i %-9i %-9i %-9i %-9i\n", i, regs[i].taken, regs[i].valid, regs[i].val, regs[i].zero_flag);
 	}	
 }
 
 void print_arch_regs(areg_t* regs) {
 	printf("---Architectural Registers---\n");
-	printf("%-9s %-9s %-9s\n", "reg", "valid", "u_rd");
+	//printf("%-9s %-9s %-9s\n", "reg", "valid", "u_rd");
+	//for(int i=0; i<NUM_ARCH_REGS; i++) {
+	//	printf("R%-9i %-9i %-9i\n", i, regs[i].valid, regs[i].u_rd);
+	//}		
+	printf("%-9s %-9s\n", "reg", "u_reg");
 	for(int i=0; i<NUM_ARCH_REGS; i++) {
-		printf("R%-9i %-9i %-9i\n", i, regs[i].valid, regs[i].u_rd);
+		printf("R%-9i U%-9i\n", i, regs[i].u_rd);
 	}		
 }
 
@@ -172,7 +174,7 @@ void print_cpu(cpu_t* cpu) {
 	
 	print_rob(&cpu->rob);
 	print_lsq(&cpu->lsq);
-//	print_memory(cpu);
+	print_memory(cpu);
 	print_iq(cpu->iq);
 	
 	print_all_FU(cpu);	

@@ -3,7 +3,7 @@
 
 #include "cpu.h"
 
-void print_insn(stage_t* stage);
+void print_insn(stage_t* stage, char rename);
 void print_stage_content(char* name, stage_t* stage);
 void print_rename_table(cpu_t* cpu);
 
