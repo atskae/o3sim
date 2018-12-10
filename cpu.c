@@ -7,7 +7,7 @@
 #include "cpu.h"
 #include "print.h" // all printing functions
 
-#define PRINT 1
+#define PRINT 0
 
 cpu_t* cpu_init(const char* filename) {
 	
@@ -774,6 +774,7 @@ int execute(cpu_t* cpu) {
 					
 						// free this cfid
 						cpu->cfid_freelist[cfid] = 0;	
+						cpu->cfid = -1; // not sure...
 						temp_head_ptr = (temp_head_ptr + 1) % CFQ_SIZE;
 					
 					} // convert matching cfid to NOPs ; end
@@ -783,23 +784,24 @@ int execute(cpu_t* cpu) {
 				else { // not taken branch
 					// free this cfid
 					cpu->cfid_freelist[intFU->cfid] = 0;		
+					cpu->cfid = -1; // not sure...
 				}
 	
 				//robe->valid = 1;	
 			} // controlflow insns ; end 
 
-			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && strcmp(intFU->opcode, "MOVC") && strcmp(intFU->opcode, "JAL")) {
-				u_rd->zero_flag = (u_rd->val == 0);
+			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode)) {
+				u_rd->valid = 1;	
+				if(strcmp(intFU->opcode, "MOVC") && strcmp(intFU->opcode, "JAL")) u_rd->zero_flag = (u_rd->val == 0);
+				// broadcast ready value to IQ and LSQ
+				broadcast(cpu, robe->u_rd, u_rd->val);
 			}
 			if(has_rd(intFU->opcode) && !is_mem(intFU->opcode) && intFU->cfid != cpu->cfid) { // valid path, update saved state
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].valid = 1;
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].val = u_rd->val;
 				cpu->saved_state[cpu->cfid].unified_regs[robe->u_rd].zero_flag = u_rd->zero_flag;
 			}
-	
-			u_rd->valid = 1;
-			// broadcast ready value to IQ and LSQ
-			broadcast(cpu, robe->u_rd, u_rd->val);
+
 			robe->valid = 1;	
 		}
 				
@@ -935,7 +937,7 @@ int commit(cpu_t* cpu) {
 		// release ROB entry
 		// get ROB entry at the head of ROB
 		rob_entry_t* robe = &cpu->rob.entries[ptr];
-		if(robe->valid) { // insn has wrote to URF 
+		if(robe->taken && robe->valid) { // insn has wrote to URF 
 			
 			if(has_rd(robe->opcode)) {
 				// set arch reg mapping to URF

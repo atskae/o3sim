@@ -174,7 +174,7 @@ void print_cpu(cpu_t* cpu) {
 	
 	print_rob(&cpu->rob);
 	print_lsq(&cpu->lsq);
-	//print_memory(cpu);
+	print_memory(cpu);
 	print_iq(cpu->iq);
 	
 	print_all_FU(cpu);	
