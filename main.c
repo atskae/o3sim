@@ -53,23 +53,20 @@ int main(int argc, char* argv[]) {
 			token[strcspn(token, "\r\n")] = 0; // removes new line
 			cpu->stop_cycle = cpu->clock + atoi(token);
 			printf("sim> Simulating %s cycles.\n", token);		
-			cpu_run(cpu);	
+			cpu_run(cpu, "simulate");	
+			display(cpu);
 
 		} else if(strcmp(token, "display") == 0) {	
-			
-			printf("--------------------------------\n");
-			printf("Clock Cycle #: %d\n", cpu->clock);
-			printf("--------------------------------\n");
-	
-			int ptr = cpu->print_stack_ptr - 1;	
-			for(int i=ptr; i>=0; i--) {
-				print_info_t* p = &cpu->print_stack[i];
-				stage_t* stage = &cpu->print_info[p->idx];
-				print_stage_content(p->name, stage);
+			token = strtok(NULL, " "); // obtain number of cycles to simulate
+			if(!token || atoi(token) == 0) {
+				display(cpu);	
+				continue;
 			}
-		
-			print_cpu(cpu); // prints reg files, rob, lsq, etc.
-
+			token[strcspn(token, "\r\n")] = 0; // removes new line
+			cpu->stop_cycle = cpu->clock + atoi(token);
+			printf("sim> Displaying %s cycles.\n", token);		
+			cpu_run(cpu, "display");
+			
 		} else if(strcmp(token, "quit") == 0 || strcmp(token, "q") == 0 ) {
  			printf("sim> Aufwiedersehen!\n");
 			break;
@@ -83,8 +80,8 @@ int main(int argc, char* argv[]) {
 				continue;	
 			}
 			cpu->stop_cycle = cpu->clock + 1;
-			printf("Simulating 1 cycle.\n");		
-			cpu_run(cpu);
+			printf("Displaying 1 cycle.\n");		
+			cpu_run(cpu, "display");
 
 		} else {
 			printf("sim> Invalid token: %s\n", token);

@@ -181,6 +181,37 @@ void print_cpu(cpu_t* cpu) {
 	print_arch_regs(cpu->arch_regs);
 }
 
+void print_code(cpu_t* cpu) {
+	
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s\n", "pc", "opcode", "rd", "rs1", "rs2", "imm");	
+	for (int i = 0; i < cpu->code_size; ++i) {
+		printf("%-9d %-9s %-9d %-9d %-9d %-9d\n",
+		CODE_START_ADDR + i*4,
+		cpu->code[i].opcode,
+		cpu->code[i].rd,
+		cpu->code[i].rs1,
+		cpu->code[i].rs2,
+		cpu->code[i].imm);
+	}
+
+} 
+
+void display(cpu_t* cpu) {	
+	printf("--------------------------------\n");
+	printf("Clock Cycle # %d\n", cpu->clock);
+	printf("--------------------------------\n");
+
+	// print stage contents
+	int ptr = cpu->print_stack_ptr - 1;	
+	for(int i=ptr; i>=0; i--) {
+		print_info_t* p = &cpu->print_stack[i];
+		stage_t* stage = &cpu->print_info[p->idx];
+		print_stage_content(p->name, stage);
+	}
+
+	print_cpu(cpu); // prints reg files, rob, lsq, etc...
+}
+
 void update_print_stack(char* name, cpu_t* cpu, int idx) {		
 	strcpy(cpu->print_stack[cpu->print_stack_ptr].name, name); // name of stage/FU
 	cpu->print_stack[cpu->print_stack_ptr].idx = idx;

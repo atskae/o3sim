@@ -259,7 +259,7 @@ typedef struct cpu_t {
 
 insn_t* create_code(const char* filename, int* size);
 cpu_t* cpu_init(const char* filename);
-int cpu_run(cpu_t* cpu);
+int cpu_run(cpu_t* cpu, char* command);
 void cpu_stop(cpu_t* cpu);
 
 /* Pipeline stages */

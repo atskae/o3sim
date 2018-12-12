@@ -8,6 +8,7 @@
 #include "print.h" // all printing functions
 
 #define PRINT 0
+static char display_cycle = 0; // prints state of each cycle
 
 cpu_t* cpu_init(const char* filename) {
 	
@@ -46,22 +47,10 @@ cpu_t* cpu_init(const char* filename) {
 		free(cpu);
 		return NULL;
 	}
-	
-	if(PRINT) {
-		fprintf(stderr, "sim> CPU initialized ; %i instructions\n", cpu->code_size);
-		printf("%-9s %-9s %-9s %-9s %-9s %-9s\n", "pc", "opcode", "rd", "rs1", "rs2", "imm");
-		
-		for (int i = 0; i < cpu->code_size; ++i) {
-			printf("%-9d %-9s %-9d %-9d %-9d %-9d\n",
-			CODE_START_ADDR + i*4,
-			cpu->code[i].opcode,
-			cpu->code[i].rd,
-			cpu->code[i].rs1,
-			cpu->code[i].rs2,
-			cpu->code[i].imm);
-		}
-	}
 
+	// prints the instructions that we loaded from file		
+	print_code(cpu);
+	
 	// solely for printing purposes
 	cpu->print_info = (stage_t*) malloc((cpu->code_size + 1) * sizeof(stage_t)); // information about each instruction ; +1 for NOP
 	memset(cpu->print_info, 0,(cpu->code_size + 1) * sizeof(stage_t));
@@ -201,7 +190,10 @@ int fetch(cpu_t* cpu) {
 			update_print_stack("Fetch", cpu, cpu->code_size);
 			return 0;	
 		}
-		if(is_nop(stage->opcode)) return 0;
+		if(is_nop(stage->opcode)) {
+			update_print_stack("Fetch", cpu, cpu->code_size);
+			return 0;
+		}
 
 		stage->rd = insn->rd;
 		stage->rs1 = insn->rs1;
@@ -254,7 +246,7 @@ int decode(cpu_t* cpu) {
 		}
 	
 		if(is_nop(stage->opcode)) {
-			cpu->stage[DP] = cpu->stage[DRF]; // move the halt to the next stage
+			//cpu->stage[DP] = cpu->stage[DRF]; 
 			update_print_stack("Decode", cpu, cpu->code_size);
 			return 0;
 		}
@@ -279,7 +271,11 @@ int decode(cpu_t* cpu) {
 			}
 			
 			if(stage->u_rd == -1) { // no more free unified registers ; stall
-				printf("No more unified registers. Insert logic here...\n");	
+				// printf("No more unified registers. Insert logic here...\n");
+				// block fetch for 1 cycle
+				cpu->stage[F].busy = 1;
+				update_print_stack("Decode", cpu, get_code_index(stage->pc));
+				return 0;
 			}
 	
 			// update frontend rename table
@@ -329,7 +325,12 @@ int dispatch(cpu_t* cpu) {
 			lsq_t* lsq = &cpu->lsq;		
 			// if LSQ is full
 			if(lsq->entries[lsq->tail_ptr].taken) {
-				printf("LSQ full... Insert logic here.\n");
+				//printf("LSQ full... Insert logic here.\n");
+				// block Fetch and Decode stage for 1 cycle
+				cpu->stage[F].busy = 1;
+				cpu->stage[DRF].busy = 1;
+				update_print_stack("Dispatch", cpu, get_code_index(stage->pc));
+				return 0;
 			} else { // create an LSQ entry
 				lsq_idx = lsq->tail_ptr;
 				lsq_entry_t* lsqe = &lsq->entries[lsq_idx];
@@ -356,7 +357,13 @@ int dispatch(cpu_t* cpu) {
 		rob_t* rob = &cpu->rob;
 		int rob_idx = -1;
 		if(rob->entries[rob->tail_ptr].taken) {
-			printf("ROB full. Insert logic here...\n");
+			//printf("ROB full. Insert logic here...\n");
+			// block Fetch and Decode stage for 1 cycle
+			cpu->stage[F].busy = 1;
+			cpu->stage[DRF].busy = 1;
+			update_print_stack("Dispatch", cpu, get_code_index(stage->pc));
+			return 0;
+
 		} else {
 			rob_idx = rob->tail_ptr;
 			rob_entry_t* robe = &rob->entries[rob_idx];
@@ -383,7 +390,11 @@ int dispatch(cpu_t* cpu) {
 					}
 				}
 				if(!found) {
-					printf("No more cfids. Insert logic here...\n");
+					//printf("No more cfids. Insert logic here...\n");
+					cpu->stage[F].busy = 1;
+					cpu->stage[DRF].busy = 1;
+					update_print_stack("Dispatch", cpu, get_code_index(stage->pc));	
+					return 0;
 				}
 
 				// add new cfid to cfq
@@ -477,7 +488,12 @@ int dispatch(cpu_t* cpu) {
 				}
 			} // create IQ entry ; end
 			if(iq_idx < 0) {
-				printf("IQ full... insert logic here...\n");
+				//printf("IQ full... insert logic here...\n");
+				// block Fetch and Decode stage for 1 cycle
+				cpu->stage[F].busy = 1;
+				cpu->stage[DRF].busy = 1;
+				update_print_stack("Dispatch", cpu, get_code_index(stage->pc));
+				return 0;
 			}	
 		} // !is_halt() ; end
 	
@@ -759,7 +775,6 @@ int execute(cpu_t* cpu) {
 							strcpy(cpu->stage[F].opcode, "NOP");
 							cpu->stage[F].busy = 1; // let NOP sit for 1 cycle
 						}
-
 						if(cpu->stage[DRF].cfid == cfid) {
 							strcpy(cpu->stage[DRF].opcode, "NOP");
 						}
@@ -875,17 +890,19 @@ int memory(cpu_t* cpu) {
 				// print info
 				memFU->print_idx = get_code_index(lsqe->pc);
 			
-				// remove entry from LSQ and ROB
-				int head_ptr = cpu->lsq.head_ptr;
-				cpu->lsq.entries[head_ptr].taken = 0;
-				cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE;
-				
-				head_ptr = cpu->rob.head_ptr;
-				cpu->rob.entries[head_ptr].taken = 0;
-				cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE;
+				// commit the STORE ; remove entry from LSQ and ROB only for a STORE (since nothing depends on STORE)
+				if(strcmp(lsqe->opcode, "STORE") == 0) {
+					int head_ptr = cpu->lsq.head_ptr;
+					cpu->lsq.entries[head_ptr].taken = 0;
+					cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE;
+					
+					head_ptr = cpu->rob.head_ptr;
+					cpu->rob.entries[head_ptr].taken = 0;
+					cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE;
 	
-				update_print_stack("Commit", cpu, memFU->print_idx);
-//				update_print_stack("Memory", cpu, memFU->print_idx);
+					update_print_stack("Commit", cpu, memFU->print_idx);
+					//update_print_stack("Memory", cpu, memFU->print_idx);
+				}
 			}
 		}
 	
@@ -903,8 +920,6 @@ int memory(cpu_t* cpu) {
 			u_rd->val = cpu->memory[memFU->mem_addr];
 			u_rd->valid = 1;
 
-			// commit process, since ROB entry was removed earlier
-			
 			// update architectural register file
 			cpu->arch_regs[memFU->rd].u_rd = memFU->u_rd;
 
@@ -915,6 +930,19 @@ int memory(cpu_t* cpu) {
 
 			// broadcast ready value to IQ
 			broadcast(cpu, memFU->u_rd, u_rd->val);
+		
+			// commit the LOAD	
+			int head_ptr = cpu->lsq.head_ptr;
+			cpu->lsq.entries[head_ptr].taken = 0;
+			cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE;
+			
+			head_ptr = cpu->rob.head_ptr;
+			cpu->rob.entries[head_ptr].taken = 0;
+			cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE;
+	
+			update_print_stack("Commit", cpu, memFU->print_idx);
+			//update_print_stack("Memory", cpu, memFU->print_idx);
+
 		}
 		else if(strcmp(memFU->opcode, "STORE") == 0) {
 			cpu->memory[memFU->mem_addr] = memFU->u_rs2_val;
@@ -995,7 +1023,9 @@ char no_more_insn(cpu_t* cpu) {
 }
 
 /* Main simulation loop */
-int cpu_run(cpu_t* cpu) {
+int cpu_run(cpu_t* cpu, char* command) {
+	
+	if(strcmp(command, "display") == 0) display_cycle = 1;
 	
 	while(1) {
 	
@@ -1009,26 +1039,12 @@ int cpu_run(cpu_t* cpu) {
 		decode(cpu);
 		fetch(cpu);
 		
-		if(PRINT) {
-			printf("--------------------------------\n");
-			printf("Clock Cycle # %d\n", cpu->clock);
-			printf("--------------------------------\n");
-
-			// print stage contents
-			int ptr = cpu->print_stack_ptr - 1;	
-			for(int i=ptr; i>=0; i--) {
-				print_info_t* p = &cpu->print_stack[i];
-				stage_t* stage = &cpu->print_info[p->idx];
-				print_stage_content(p->name, stage);
-			}
-		
-			print_cpu(cpu); // prints reg files, rob, lsq, etc...
-		}
-		
+		if(display_cycle) display(cpu);
+				
 		cpu->done = no_more_insn(cpu);
 		if(cpu->clock == cpu->stop_cycle || cpu->done) {
 			printf("sim> Reached %i cycles\n", cpu->clock);
-			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);
+			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);	
 			break;
 		}
 

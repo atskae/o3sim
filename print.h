@@ -17,6 +17,8 @@ void print_arch_regs(areg_t* regs);
 void print_all_FU(cpu_t* cpu);
 
 void print_cpu(cpu_t* cpu);
+void print_code(cpu_t* cpu);
+void display(cpu_t* cpu);
 void update_print_stack(char* name, cpu_t* cpu, int idx); // index into cpu->print_info
 
 #endif // PRINT_H
