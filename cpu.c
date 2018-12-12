@@ -540,6 +540,11 @@ int issue(cpu_t* cpu) {
 	
 		if(cpu->intFU.busy <= 0 && is_intFU(iqe->opcode)) { // if this FU is free and this insn goes to intFU
 			char ready = iqe->u_rs1_ready && iqe->u_rs2_ready;
+			
+			if(strcmp(iqe->opcode, "LOAD") == 0 || strcmp(iqe->opcode, "STORE") == 0) { // mem insn only need rs1 to be ready 
+				ready = iqe->u_rs1_ready;
+			}
+
 			if(strcmp(iqe->opcode, "BZ") == 0 || strcmp(iqe->opcode, "BNZ") == 0) { // for these insn, zero-flag value must also be ready
 				ready = ready & iqe->zero_flag_ready;
 			}
@@ -880,6 +885,7 @@ int memory(cpu_t* cpu) {
 
 			if(ready) { // send to memFU	
 				strcpy(memFU->opcode, lsqe->opcode);
+				memFU->pc = lsqe->pc;
 				memFU->mem_addr = lsqe->mem_addr;
 				memFU->u_rs2_val = lsqe->u_rs2_val;	// only used by stores
 				//memFU->rob_idx = lsqe->rob_idx;
@@ -921,26 +927,30 @@ int memory(cpu_t* cpu) {
 			u_rd->valid = 1;
 
 			// update architectural register file
-			cpu->arch_regs[memFU->rd].u_rd = memFU->u_rd;
+			//cpu->arch_regs[memFU->rd].u_rd = memFU->u_rd;
 
-			// update backend rename table ; memory insn ROB entries were removed earlier, so rename table update must be done here
-			int old_u_rd = cpu->back_rename_table[memFU->rd];
-			if(old_u_rd != -1 && old_u_rd != memFU->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
-			cpu->back_rename_table[memFU->rd] = memFU->u_rd;
+			//// update backend rename table ; memory insn ROB entries were removed earlier, so rename table update must be done here
+			//int old_u_rd = cpu->back_rename_table[memFU->rd];
+			//if(old_u_rd != -1 && old_u_rd != memFU->u_rd) cpu->unified_regs[old_u_rd].taken = 0; // free old mapping
+			//cpu->back_rename_table[memFU->rd] = memFU->u_rd;
 
 			// broadcast ready value to IQ
 			broadcast(cpu, memFU->u_rd, u_rd->val);
 		
-			// commit the LOAD	
+			// remove LOAD from lsq 
 			int head_ptr = cpu->lsq.head_ptr;
 			cpu->lsq.entries[head_ptr].taken = 0;
 			cpu->lsq.head_ptr = (cpu->lsq.head_ptr + 1) % LSQ_SIZE;
 			
-			head_ptr = cpu->rob.head_ptr;
-			cpu->rob.entries[head_ptr].taken = 0;
-			cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE;
+			rob_entry_t* robe = &cpu->rob.entries[cpu->rob.head_ptr];
+			//assert(robe->pc == memFU->pc);
+			robe->valid = 1;	
 	
-			update_print_stack("Commit", cpu, memFU->print_idx);
+			//head_ptr = cpu->rob.head_ptr;
+			//cpu->rob.entries[head_ptr].taken = 0;
+			//cpu->rob.head_ptr = (cpu->rob.head_ptr + 1) % ROB_SIZE;
+	
+			//update_print_stack("Commit", cpu, memFU->print_idx);
 			//update_print_stack("Memory", cpu, memFU->print_idx);
 
 		}
