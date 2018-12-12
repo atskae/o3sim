@@ -1044,7 +1044,6 @@ int cpu_run(cpu_t* cpu, char* command) {
 		cpu->done = no_more_insn(cpu);
 		if(cpu->clock == cpu->stop_cycle || cpu->done) {
 			printf("sim> Reached %i cycles\n", cpu->clock);
-			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);	
 			break;
 		}
 

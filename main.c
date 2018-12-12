@@ -55,6 +55,7 @@ int main(int argc, char* argv[]) {
 			printf("sim> Simulating %s cycles.\n", token);		
 			cpu_run(cpu, "simulate");	
 			display(cpu);
+			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);	
 
 		} else if(strcmp(token, "display") == 0) {	
 			token = strtok(NULL, " "); // obtain number of cycles to simulate

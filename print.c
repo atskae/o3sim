@@ -75,6 +75,7 @@ void print_rename_table(cpu_t* cpu) {
 	}
 	// zero flag
 	printf("z-f: U%-9i z-f: U%-9i\n", cpu->front_rename_table[ZERO_FLAG], cpu->back_rename_table[ZERO_FLAG]);
+	printf("\n");
 }
 
 void print_iq(iq_entry_t* iq) {
@@ -83,8 +84,9 @@ void print_iq(iq_entry_t* iq) {
 	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "dispatch", "cfid", "pc", "opcode", "rs1", "rs1_rdy", "rs1_val", "rs2", "rs2_rdy", "rs2_val", "imm", "z_ud", "z_rdy");
 	for(int i=0; i<IQ_SIZE; i++) {
 		iq_entry_t* iqe = &iq[i];
-		printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->cfid, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm, iqe->zero_flag_u_rd, iqe->zero_flag_ready);	
+		if(iqe->taken) printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i %-9i %-9i %-9i\n", i, iqe->taken, iqe->cycle_dispatched, iqe->cfid, iqe->pc, iqe->opcode, iqe->u_rs1, iqe->u_rs1_ready, iqe->u_rs1_val, iqe->u_rs2, iqe->u_rs2_ready, iqe->u_rs2_val, iqe->imm, iqe->zero_flag_u_rd, iqe->zero_flag_ready);	
 	}
+	printf("\n");
 }
 
 void print_memory(cpu_t* cpu) {
@@ -97,6 +99,7 @@ void print_memory(cpu_t* cpu) {
 		}
 		printf("\n");	
 	}
+	printf("\n");
 }
 
 void print_lsq(lsq_t* lsq) {
@@ -104,11 +107,12 @@ void print_lsq(lsq_t* lsq) {
 	printf("%-9s %-9s\n", "head_ptr", "tail_ptr");
 	printf("%-9i %-9i\n", lsq->head_ptr, lsq->tail_ptr);
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "cfid", "pc", "opcode", "valid", "mem_addr", "rd", "rs2_rdy", "rs2", "rs2_val");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "cfid", "pc", "opcode", "valid", "mem_addr", "rd", "rs2_rdy", "rs2", "rs2_val");
 	for(int i=0; i<LSQ_SIZE; i++) {
 		lsq_entry_t* l = &lsq->entries[i];
-		printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i\n", i, l->taken, l->cfid, l->pc, l->opcode, l->mem_addr_valid, l->mem_addr, l->u_rd, l->u_rs2_ready, l->u_rs2, l->u_rs2_val);	
+		if(l->taken) printf("%-9i %-9i %-9i %-9s %-9i %-9i %-9i %-9i %-9i %-9i\n", i, l->cfid, l->pc, l->opcode, l->mem_addr_valid, l->mem_addr, l->u_rd, l->u_rs2_ready, l->u_rs2, l->u_rs2_val);	
 	}
+	printf("\n");
 }
 
 void print_rob(rob_t* rob) {
@@ -116,11 +120,12 @@ void print_rob(rob_t* rob) {
 	printf("%-9s %-9s\n", "head_ptr", "tail_ptr");
 	printf("%-9i %-9i\n", rob->head_ptr, rob->tail_ptr);
 
-	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "taken", "valid", "cfid", "pc", "opcode", "rd", "lsq_idx");
+	printf("%-9s %-9s %-9s %-9s %-9s %-9s %-9s\n", "index", "valid", "cfid", "pc", "opcode", "rd", "lsq_idx");
 	for(int i=0; i<ROB_SIZE; i++) {
 		rob_entry_t* r = &rob->entries[i];
-		printf("%-9i %-9i %-9i %-9i %-9i %-9s %-9i %-9i\n", i, r->taken, r->valid, r->cfid, r->pc, r->opcode, r->u_rd, r->lsq_idx);	
+		if(r->taken) printf("%-9i %-9i %-9i %-9i %-9s %-9i %-9i\n", i, r->valid, r->cfid, r->pc, r->opcode, r->u_rd, r->lsq_idx);	
 	}
+	printf("\n");
 }
 
 void print_unified_regs(ureg_t* regs) {
@@ -128,7 +133,8 @@ void print_unified_regs(ureg_t* regs) {
 	printf("%-9s %-9s %-9s %-9s %-9s\n", "reg", "taken", "valid", "value", "zero");
 	for(int i=0; i<NUM_UNIFIED_REGS; i++) {
 		printf("U%-9i %-9i %-9i %-9i %-9i\n", i, regs[i].taken, regs[i].valid, regs[i].val, regs[i].zero_flag);
-	}	
+	}
+	printf("\n");	
 }
 
 void print_arch_regs(areg_t* regs) {
@@ -140,7 +146,8 @@ void print_arch_regs(areg_t* regs) {
 	printf("%-9s %-9s\n", "reg", "u_reg");
 	for(int i=0; i<NUM_ARCH_REGS; i++) {
 		printf("R%-9i U%-9i\n", i, regs[i].u_rd);
-	}		
+	}
+	printf("\n");	
 }
 
 void print_all_FU(cpu_t* cpu) {
@@ -165,7 +172,8 @@ void print_all_FU(cpu_t* cpu) {
 	stage->busy = memFU->busy;
 	if(stage->busy < 0) stage = &cpu->print_info[cpu->code_size]; // NOP	
 	print_stage_content("memFU", stage);
-
+	
+	printf("\n");
 }
 
 void print_cpu(cpu_t* cpu) {
@@ -174,9 +182,9 @@ void print_cpu(cpu_t* cpu) {
 	
 	print_rob(&cpu->rob);
 	print_lsq(&cpu->lsq);
+	print_iq(cpu->iq);	
 	print_memory(cpu);
-	print_iq(cpu->iq);
-	
+
 	print_all_FU(cpu);	
 	print_arch_regs(cpu->arch_regs);
 }
