@@ -248,6 +248,8 @@ typedef struct cpu_t {
 	// info about current cycle only	
 	print_info_t print_stack[16]; // holds indicies into print_info[]
 	int print_stack_ptr;
+	
+	char print_memory; // no need to pring memory all the time ; only when mem access occurs and at the last displayed cycle
 
 } cpu_t;
 

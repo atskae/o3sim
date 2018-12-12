@@ -947,6 +947,7 @@ int memory(cpu_t* cpu) {
 		else if(strcmp(memFU->opcode, "STORE") == 0) {
 			cpu->memory[memFU->mem_addr] = memFU->u_rs2_val;
 		}
+		cpu->print_memory = 1; // print memory contents since mem has been updated
 		//robe->valid = 1;		
 		//lsqe->done = 1;
 	
@@ -1031,6 +1032,7 @@ int cpu_run(cpu_t* cpu, char* command) {
 	
 		cpu->clock++;				
 		cpu->print_stack_ptr = 0; // reset
+		cpu->print_memory = 0; // reset
 
 		commit(cpu);
 		memory(cpu);

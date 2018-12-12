@@ -54,7 +54,7 @@ void print_stage_content(char* name, stage_t* stage) {
 	print_insn(stage, rename);	
 	if(strcmp(name, "intFU") == 0 || strcmp(name, "mulFU") == 0 || strcmp(name, "memFU") == 0 ) {
 		if(stage->cfid != -1) printf("cfid %i ", stage->cfid);
-		if(stage->busy > 1) {
+		if(stage->busy > 0) {
 		//	int lat;
 		//	if(strcmp(stage->name, "intFU") == 0) lat = INT_FU_LAT;
 		//	else if(strcmp(stage->name, "mulFU") == 0) lat = MUL_FU_LAT;
@@ -183,7 +183,7 @@ void print_cpu(cpu_t* cpu) {
 	print_rob(&cpu->rob);
 	print_lsq(&cpu->lsq);
 	print_iq(cpu->iq);	
-	print_memory(cpu);
+	if(cpu->print_memory || cpu->done) print_memory(cpu); // only print mem when updated or last cycle to display
 
 	print_all_FU(cpu);	
 	print_arch_regs(cpu->arch_regs);

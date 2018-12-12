@@ -67,7 +67,8 @@ int main(int argc, char* argv[]) {
 			cpu->stop_cycle = cpu->clock + atoi(token);
 			printf("sim> Displaying %s cycles.\n", token);		
 			cpu_run(cpu, "display");
-			
+			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);	
+
 		} else if(strcmp(token, "quit") == 0 || strcmp(token, "q") == 0 ) {
  			printf("sim> Aufwiedersehen!\n");
 			break;
@@ -83,6 +84,7 @@ int main(int argc, char* argv[]) {
 			cpu->stop_cycle = cpu->clock + 1;
 			printf("Displaying 1 cycle.\n");		
 			cpu_run(cpu, "display");
+			if(cpu->done) printf("sim> No more instructions to simulate. Completed at %i cycles.\n", cpu->clock);	
 
 		} else {
 			printf("sim> Invalid token: %s\n", token);
